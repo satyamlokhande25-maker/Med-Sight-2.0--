@@ -1,0 +1,360 @@
+import React, { useState } from 'react';
+import { useCollection } from 'react-firebase-hooks/firestore';
+import { collection, addDoc, query, where, orderBy, serverTimestamp, deleteDoc, doc } from 'firebase/firestore';
+import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
+import { FileText, Plus, Download, Send, Trash2, Search, Printer, MessageCircle } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { toast } from 'sonner';
+import jsPDF from 'jspdf';
+import { Patient, Prescription } from '../types';
+
+export function PrescriptionManager() {
+  const [showNewModal, setShowNewModal] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [newPrescription, setNewPrescription] = useState({
+    patientId: '',
+    patientName: '',
+    date: new Date().toISOString().split('T')[0],
+    medicines: [{ name: '', dosage: '', duration: '' }],
+    notes: ''
+  });
+
+  const [patientsValue] = useCollection(collection(db, 'patients'));
+  const patients = patientsValue?.docs.map(doc => ({ id: doc.id, ...doc.data() } as Patient)) || [];
+
+  const [prescriptionsValue] = useCollection(
+    query(collection(db, 'prescriptions'), orderBy('date', 'desc'))
+  );
+  const prescriptions = prescriptionsValue?.docs.map(doc => ({ id: doc.id, ...doc.data() } as Prescription)) || [];
+
+  const handleAddMedicine = () => {
+    setNewPrescription({
+      ...newPrescription,
+      medicines: [...newPrescription.medicines, { name: '', dosage: '', duration: '' }]
+    });
+  };
+
+  const handleMedicineChange = (index: number, field: string, value: string) => {
+    const updatedMedicines = [...newPrescription.medicines];
+    updatedMedicines[index] = { ...updatedMedicines[index], [field]: value };
+    setNewPrescription({ ...newPrescription, medicines: updatedMedicines });
+  };
+
+  const handleSave = async () => {
+    if (!newPrescription.patientId || newPrescription.medicines.some(m => !m.name)) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+
+    try {
+      const selectedPatient = patients.find(p => p.id === newPrescription.patientId);
+      await addDoc(collection(db, 'prescriptions'), {
+        ...newPrescription,
+        patientName: selectedPatient?.name || 'Unknown',
+        userId: auth.currentUser?.uid,
+        createdAt: serverTimestamp()
+      });
+      toast.success('Prescription saved successfully');
+      setShowNewModal(false);
+      setNewPrescription({
+        patientId: '',
+        patientName: '',
+        date: new Date().toISOString().split('T')[0],
+        medicines: [{ name: '', dosage: '', duration: '' }],
+        notes: ''
+      });
+    } catch (error) {
+      console.error('Error saving prescription:', error);
+      handleFirestoreError(error, OperationType.CREATE, 'prescriptions');
+      toast.error('Failed to save prescription. Check permissions.');
+    }
+  };
+
+  const handleDeletePrescription = async (id: string, patientName: string) => {
+    toast(`Are you sure you want to delete the prescription for ${patientName}?`, {
+      action: {
+        label: 'Delete',
+        onClick: async () => {
+          try {
+            await deleteDoc(doc(db, 'prescriptions', id));
+            toast.success('Prescription deleted successfully');
+          } catch (error) {
+            console.error('Error deleting prescription:', error);
+            toast.error('Failed to delete prescription');
+          }
+        },
+      },
+      cancel: {
+        label: 'Cancel',
+        onClick: () => {},
+      },
+    });
+  };
+
+  const generatePDF = (prescription: any) => {
+    const doc = new jsPDF();
+    
+    // Header
+    doc.setFontSize(22);
+    doc.setTextColor(16, 185, 129); // Emerald 500
+    doc.text('MIDSIGHT 2.0 - CLINIC', 105, 20, { align: 'center' });
+    
+    doc.setFontSize(12);
+    doc.setTextColor(100);
+    doc.text('Digital Prescription', 105, 30, { align: 'center' });
+    
+    doc.setDrawColor(200);
+    doc.line(20, 35, 190, 35);
+    
+    // Patient Info
+    doc.setFontSize(14);
+    doc.setTextColor(0);
+    doc.text(`Patient: ${prescription.patientName}`, 20, 50);
+    doc.text(`Date: ${prescription.date}`, 150, 50);
+    
+    doc.line(20, 55, 190, 55);
+    
+    // Medicines
+    doc.setFontSize(16);
+    doc.text('Medicines:', 20, 70);
+    
+    let y = 80;
+    prescription.medicines.forEach((med: any, index: number) => {
+      doc.setFontSize(12);
+      doc.text(`${index + 1}. ${med.name}`, 25, y);
+      doc.setFontSize(10);
+      doc.setTextColor(100);
+      doc.text(`Dosage: ${med.dosage} | Duration: ${med.duration}`, 30, y + 5);
+      y += 15;
+    });
+    
+    // Notes
+    if (prescription.notes) {
+      y += 10;
+      doc.setFontSize(14);
+      doc.setTextColor(0);
+      doc.text('Notes:', 20, y);
+      doc.setFontSize(11);
+      doc.setTextColor(80);
+      doc.text(prescription.notes, 20, y + 10, { maxWidth: 170 });
+    }
+    
+    // Footer
+    doc.setFontSize(10);
+    doc.setTextColor(150);
+    doc.text('Generated by MedSight 2.0', 105, 280, { align: 'center' });
+    
+    doc.save(`Prescription_${prescription.patientName}_${prescription.date}.pdf`);
+  };
+
+  const sendWhatsApp = (prescription: any) => {
+    const patient = patients.find(p => p.id === prescription.patientId);
+    if (!patient?.phone) {
+      toast.error('Patient phone number not found');
+      return;
+    }
+    
+    const message = `Hello ${prescription.patientName}, here is your prescription from Midsight Clinic:\n\n` +
+      prescription.medicines.map((m: any) => `- ${m.name}: ${m.dosage} (${m.duration})`).join('\n') +
+      (prescription.notes ? `\n\nNotes: ${prescription.notes}` : '') +
+      `\n\nGet well soon!`;
+      
+    const encodedMessage = encodeURIComponent(message);
+    window.open(`https://wa.me/${patient.phone}?text=${encodedMessage}`, '_blank');
+  };
+
+  const filteredPrescriptions = prescriptions.filter(p => 
+    p.patientName.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  return (
+    <div className="space-y-8">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div>
+          <h1 className="text-3xl font-bold text-zinc-100 tracking-tight">Prescriptions</h1>
+          <p className="text-zinc-400 text-sm mt-1">Manage and generate digital prescriptions for your patients.</p>
+        </div>
+        <button 
+          onClick={() => setShowNewModal(true)}
+          className="flex items-center gap-2 px-6 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-bold transition-all shadow-lg shadow-emerald-500/20"
+        >
+          <Plus size={20} />
+          New Prescription
+        </button>
+      </div>
+
+      <div className="relative">
+        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500" size={20} />
+        <input 
+          type="text" 
+          placeholder="Search by patient name..." 
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl py-4 pl-12 pr-4 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {filteredPrescriptions.map((p: any) => (
+          <motion.div 
+            key={p.id}
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-zinc-900 border border-zinc-800 p-6 rounded-[2rem] hover:border-emerald-500/50 transition-all group"
+          >
+            <div className="flex items-start justify-between mb-4">
+              <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-500">
+                <FileText size={24} />
+              </div>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => generatePDF(p)}
+                  className="p-2 bg-zinc-800 text-zinc-400 hover:text-emerald-500 rounded-xl transition-all"
+                  title="Download PDF"
+                >
+                  <Download size={18} />
+                </button>
+                <button 
+                  onClick={() => sendWhatsApp(p)}
+                  className="p-2 bg-zinc-800 text-zinc-400 hover:text-emerald-500 rounded-xl transition-all"
+                  title="Send via WhatsApp"
+                >
+                  <MessageCircle size={18} />
+                </button>
+                <button 
+                  onClick={() => handleDeletePrescription(p.id, p.patientName)}
+                  className="p-2 bg-zinc-800 text-zinc-400 hover:text-red-500 rounded-xl transition-all"
+                  title="Delete Prescription"
+                >
+                  <Trash2 size={18} />
+                </button>
+              </div>
+            </div>
+            
+            <h3 className="text-xl font-bold text-zinc-100 mb-1">{p.patientName}</h3>
+            <p className="text-zinc-500 text-sm mb-4">{p.date}</p>
+            
+            <div className="space-y-2 mb-6">
+              {p.medicines.slice(0, 2).map((med: any, i: number) => (
+                <div key={i} className="flex justify-between text-sm">
+                  <span className="text-zinc-300 font-medium">{med.name}</span>
+                  <span className="text-zinc-500">{med.dosage}</span>
+                </div>
+              ))}
+              {p.medicines.length > 2 && (
+                <p className="text-xs text-emerald-500 font-medium">+{p.medicines.length - 2} more medicines</p>
+              )}
+            </div>
+
+            <button 
+              onClick={() => generatePDF(p)}
+              className="w-full py-3 bg-zinc-800 text-zinc-300 rounded-xl font-bold hover:bg-zinc-700 transition-all flex items-center justify-center gap-2"
+            >
+              <Printer size={18} />
+              Print Prescription
+            </button>
+          </motion.div>
+        ))}
+      </div>
+
+      <AnimatePresence>
+        {showNewModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowNewModal(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-8 shadow-2xl overflow-y-auto max-h-[90vh]"
+            >
+              <h2 className="text-2xl font-bold text-zinc-100 mb-6">Create New Prescription</h2>
+              
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-zinc-400">Select Patient</label>
+                  <select 
+                    value={newPrescription.patientId}
+                    onChange={(e) => setNewPrescription({ ...newPrescription, patientId: e.target.value })}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-xl p-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                  >
+                    <option value="">Select a patient...</option>
+                    {patients.map((p: any) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium text-zinc-400">Medicines</label>
+                    <button 
+                      onClick={handleAddMedicine}
+                      className="text-emerald-500 text-sm font-bold flex items-center gap-1 hover:text-emerald-400"
+                    >
+                      <Plus size={16} /> Add More
+                    </button>
+                  </div>
+                  
+                  {newPrescription.medicines.map((med, index) => (
+                    <div key={index} className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <input 
+                        placeholder="Medicine Name"
+                        value={med.name}
+                        onChange={(e) => handleMedicineChange(index, 'name', e.target.value)}
+                        className="bg-zinc-800 border border-zinc-700 rounded-xl p-3 text-zinc-100 text-sm"
+                      />
+                      <input 
+                        placeholder="Dosage (e.g. 1-0-1)"
+                        value={med.dosage}
+                        onChange={(e) => handleMedicineChange(index, 'dosage', e.target.value)}
+                        className="bg-zinc-800 border border-zinc-700 rounded-xl p-3 text-zinc-100 text-sm"
+                      />
+                      <input 
+                        placeholder="Duration (e.g. 5 days)"
+                        value={med.duration}
+                        onChange={(e) => handleMedicineChange(index, 'duration', e.target.value)}
+                        className="bg-zinc-800 border border-zinc-700 rounded-xl p-3 text-zinc-100 text-sm"
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-zinc-400">Additional Notes</label>
+                  <textarea 
+                    rows={3}
+                    value={newPrescription.notes}
+                    onChange={(e) => setNewPrescription({ ...newPrescription, notes: e.target.value })}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-xl p-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                    placeholder="Dietary instructions, follow-up advice, etc."
+                  />
+                </div>
+
+                <div className="flex gap-4 pt-4">
+                  <button 
+                    onClick={() => setShowNewModal(false)}
+                    className="flex-1 py-4 bg-zinc-800 text-zinc-300 rounded-2xl font-bold hover:bg-zinc-700 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={handleSave}
+                    className="flex-1 py-4 bg-emerald-500 text-white rounded-2xl font-bold hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-500/20"
+                  >
+                    Save Prescription
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}

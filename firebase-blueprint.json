@@ -1,0 +1,117 @@
+{
+  "entities": {
+    "Patient": {
+      "title": "Patient",
+      "description": "A medical patient record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "age": { "type": "number" },
+        "gender": { "type": "string" },
+        "lastVisit": { "type": "string" },
+        "status": { "type": "string" },
+        "diagnosis": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "age", "gender", "status", "diagnosis"]
+    },
+    "Appointment": {
+      "title": "Appointment",
+      "description": "A scheduled medical appointment",
+      "type": "object",
+      "properties": {
+        "time": { "type": "string" },
+        "patientName": { "type": "string" },
+        "type": { "type": "string" },
+        "status": { "type": "string" },
+        "date": { "type": "string" }
+      },
+      "required": ["time", "patientName", "type", "date"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "A to-do item for the doctor",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "completed": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" }
+      },
+      "required": ["text", "completed", "userId"]
+    },
+    "Prescription": {
+      "title": "Prescription",
+      "description": "A medical prescription for a patient",
+      "type": "object",
+      "properties": {
+        "patientId": { "type": "string" },
+        "patientName": { "type": "string" },
+        "date": { "type": "string" },
+        "medicines": { "type": "array", "items": { "type": "object", "properties": { "name": { "type": "string" }, "dosage": { "type": "string" }, "duration": { "type": "string" } } } },
+        "notes": { "type": "string" },
+        "userId": { "type": "string" }
+      },
+      "required": ["patientId", "date", "medicines", "userId"]
+    },
+    "Bill": {
+      "title": "Bill",
+      "description": "A medical bill for a patient",
+      "type": "object",
+      "properties": {
+        "patientId": { "type": "string" },
+        "patientName": { "type": "string" },
+        "date": { "type": "string" },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["paid", "pending"] },
+        "items": { "type": "array", "items": { "type": "object", "properties": { "description": { "type": "string" }, "price": { "type": "number" } } } },
+        "userId": { "type": "string" }
+      },
+      "required": ["patientId", "date", "amount", "status", "userId"]
+    },
+    "UserPreference": {
+      "title": "UserPreference",
+      "description": "User notification and application preferences",
+      "type": "object",
+      "properties": {
+        "emailNotifications": { "type": "boolean" },
+        "pushNotifications": { "type": "boolean" },
+        "smsAlerts": { "type": "boolean" },
+        "appointmentReminders": { "type": "boolean" },
+        "criticalPatientAlerts": { "type": "boolean" },
+        "darkMode": { "type": "boolean" },
+        "language": { "type": "string" }
+      },
+      "required": ["emailNotifications", "pushNotifications", "smsAlerts", "appointmentReminders", "criticalPatientAlerts", "darkMode", "language"]
+    }
+  },
+  "firestore": {
+    "/patients/{patientId}": {
+      "schema": "Patient",
+      "description": "Collection of patient records"
+    },
+    "/appointments/{appointmentId}": {
+      "schema": "Appointment",
+      "description": "Collection of scheduled appointments"
+    },
+    "/tasks/{taskId}": {
+      "schema": "Task",
+      "description": "Collection of to-do items for the doctor"
+    },
+    "/prescriptions/{prescriptionId}": {
+      "schema": "Prescription",
+      "description": "Collection of medical prescriptions"
+    },
+    "/bills/{billId}": {
+      "schema": "Bill",
+      "description": "Collection of medical bills"
+    },
+    "/user_preferences/{userId}": {
+      "schema": "UserPreference",
+      "description": "Collection of user preferences"
+    }
+  }
+}

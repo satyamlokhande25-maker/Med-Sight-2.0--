@@ -1,0 +1,136 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: patients
+    // Fields:
+    //   - id: string
+    //   - name: string (required, 1-100 chars)
+    //   - age: number (required, 0-150)
+    //   - gender: string (required, enum: Male, Female, Other)
+    //   - lastVisit: string (ISO 8601)
+    //   - status: string (required, enum: Stable, Recovering, Critical)
+    //   - diagnosis: string (required, 1-500 chars)
+    //   - email: string (valid email)
+    //   - phone: string (valid phone)
+    //
+    // Collection: appointments
+    // Fields:
+    //   - time: string (HH:MM AM/PM)
+    //   - patientName: string (required)
+    //   - type: string (required)
+    //   - date: string (YYYY-MM-DD)
+    //
+    // Collection: tasks
+    // Fields:
+    //   - text: string (required, 1-500 chars)
+    //   - completed: bool (required)
+    //   - createdAt: timestamp (optional)
+    //   - userId: string (required, matches auth.uid)
+    //
+    // Collection: user_preferences
+    // Fields:
+    //   - emailNotifications: bool
+    //   - pushNotifications: bool
+    //   - smsAlerts: bool
+    //   - appointmentReminders: bool
+    //   - criticalPatientAlerts: bool
+    //   - darkMode: bool
+    //   - language: string
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (request.auth.token.email == "satyamlokhande01@gmail.com");
+    }
+
+    function isValidPatient(data) {
+      return data.keys().hasAll(['name', 'age', 'gender', 'status', 'diagnosis']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.age is number && data.age >= 0 && data.age <= 150 &&
+             data.gender in ['Male', 'Female', 'Other'] &&
+             data.status in ['Stable', 'Recovering', 'Critical'] &&
+             data.diagnosis is string && data.diagnosis.size() > 0 && data.diagnosis.size() <= 1000;
+    }
+
+    function isValidPrescription(data) {
+      return data.keys().hasAll(['patientId', 'patientName', 'date', 'medicines']) &&
+             data.patientId is string &&
+             data.patientName is string &&
+             data.medicines is list &&
+             data.medicines.size() > 0;
+    }
+
+    function isValidBill(data) {
+      return data.keys().hasAll(['patientId', 'patientName', 'date', 'amount', 'status', 'items']) &&
+             data.patientId is string &&
+             data.patientName is string &&
+             data.amount is number &&
+             data.status in ['pending', 'paid'] &&
+             data.items is list &&
+             data.items.size() > 0;
+    }
+
+    function isValidTask(data) {
+      return data.keys().hasAll(['text', 'completed', 'userId']) &&
+             data.text is string && data.text.size() > 0 && data.text.size() <= 500 &&
+             data.completed is bool &&
+             data.userId == request.auth.uid;
+    }
+
+    function isValidUserPreference(data) {
+      return data.keys().hasAll(['emailNotifications', 'pushNotifications', 'smsAlerts', 'appointmentReminders', 'criticalPatientAlerts', 'darkMode', 'language']) &&
+             data.emailNotifications is bool &&
+             data.pushNotifications is bool &&
+             data.smsAlerts is bool &&
+             data.appointmentReminders is bool &&
+             data.criticalPatientAlerts is bool &&
+             data.darkMode is bool &&
+             data.language is string;
+    }
+
+    match /patients/{patientId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() && isValidPatient(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /appointments/{appointmentId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /tasks/{taskId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && isValidTask(request.resource.data);
+      allow update: if isAuthenticated() && isValidTask(request.resource.data) && resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    match /prescriptions/{prescriptionId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() && isValidPrescription(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /bills/{billId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() && isValidBill(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /user_preferences/{userId} {
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow write: if isAuthenticated() && request.auth.uid == userId && isValidUserPreference(request.resource.data);
+    }
+  }
+}
