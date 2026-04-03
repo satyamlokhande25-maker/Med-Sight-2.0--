@@ -7,13 +7,13 @@ MedSight 2.0 is a next-generation healthcare platform that bridges the gap betwe
  Executive Summary
 MedSight 2.0 is a state-of-the-art, AI-integrated clinical management platform designed to revolutionize healthcare delivery. By combining real-time data synchronization, advanced generative AI, and a user-centric interface, MedSight 2.0 empowers healthcare professionals with tools for diagnostic assistance, patient management, and clinical research.
 
-2. Project Vision & Objectives
+2.# Project Vision & Objectives
 The primary objective of MedSight 2.0 is to reduce the administrative burden on clinicians while enhancing the accuracy and speed of medical decision-making.
 
 Efficiency: Automate routine tasks like appointment reminders and report generation.
 Intelligence: Provide real-time AI insights grounded in the latest medical research.
 Accessibility: Ensure critical patient data is available anytime, anywhere, with a responsive and intuitive UI.
-3. System Architecture
+3#. System Architecture
 MedSight 2.0 follows a modern full-stack architecture optimized for scalability and security.
 
 3.1 Frontend
