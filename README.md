@@ -14,7 +14,7 @@ The system combines **AI diagnostics, patient management, appointment scheduling
 # 🚀 Live Demo
 
 🌐 **Deployed App:**  
-👉 https://your-google-studio-link.run.app
+👉 https://ais-pre-jnb4wxtkylcgnk4vv3452c-274181117707.asia-southeast1.run.app
 
 ---
 
