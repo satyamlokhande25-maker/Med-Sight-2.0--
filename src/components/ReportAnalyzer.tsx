@@ -41,6 +41,7 @@ interface FilePreview {
 export function ReportAnalyzer() {
   const [files, setFiles] = useState<FilePreview[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisStep, setAnalysisStep] = useState<string>("");
   const [analysis, setAnalysis] = useState<string | null>(null);
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'model', text: string }[]>([]);
@@ -48,6 +49,7 @@ export function ReportAnalyzer() {
   const [showCamera, setShowCamera] = useState(false);
   const [needsKey, setNeedsKey] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [cachedContext, setCachedContext] = useState<string>("");
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const analysisRef = useRef<HTMLDivElement>(null);
@@ -101,6 +103,7 @@ export function ReportAnalyzer() {
     const selectedFiles = Array.from(e.target.files || []);
     if (selectedFiles.length === 0) return;
 
+    setCachedContext(""); // Clear cache on new files
     selectedFiles.forEach(selectedFile => {
       const id = Math.random().toString(36).substring(7);
       
@@ -175,6 +178,7 @@ export function ReportAnalyzer() {
 
   const handleCameraCapture = (base64: string) => {
     const id = Math.random().toString(36).substring(7);
+    setCachedContext(""); // Clear cache on new capture
     const newFile: FilePreview = {
       id,
       name: `camera_capture_${Date.now()}.png`,
@@ -195,6 +199,7 @@ export function ReportAnalyzer() {
     if (readyFiles.length === 0) return;
 
     setIsAnalyzing(true);
+    setAnalysisStep("Extracting text from documents...");
     setNeedsKey(false);
     
     try {
@@ -203,21 +208,35 @@ export function ReportAnalyzer() {
       
       // Process all ready files to build context
       for (const file of readyFiles) {
-        if (file.type === 'application/pdf') {
-          const text = await extractTextFromPDF(file.data);
-          context += `--- Document: ${file.name} ---\n${text}\n\n`;
-        } else if (file.type === 'text/plain') {
-          const text = atob(file.data);
-          context += `--- Document: ${file.name} ---\n${text}\n\n`;
-        } else if (file.type.startsWith('image/')) {
-          const prompt = "Extract all medical findings, values, and clinical data from this image in a structured text format.";
-          const visionText = await getGroqVisionResponse(prompt, { data: file.data, mimeType: file.type });
-          context += `--- Image Analysis: ${file.name} ---\n${visionText}\n\n`;
+        setAnalysisStep(`Analyzing ${file.name}...`);
+        try {
+          if (file.type === 'application/pdf') {
+            const text = await extractTextFromPDF(file.data);
+            context += `--- Document: ${file.name} ---\n${text}\n\n`;
+          } else if (file.type === 'text/plain') {
+            const binaryString = atob(file.data);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+            const text = new TextDecoder().decode(bytes);
+            context += `--- Document: ${file.name} ---\n${text}\n\n`;
+          } else if (file.type.startsWith('image/')) {
+            const prompt = "Extract all medical findings, values, and clinical data from this image in a structured text format. Be extremely precise.";
+            const visionText = await getGroqVisionResponse(prompt, { data: file.data, mimeType: file.type });
+            context += `--- Image Analysis: ${file.name} ---\n${visionText}\n\n`;
+          }
+        } catch (fileError: any) {
+          console.error(`Error processing file ${file.name}:`, fileError);
+          toast.error(`Failed to process ${file.name}: ${fileError.message}`);
+          context += `--- Document: ${file.name} (Processing Error) ---\nError: ${fileError.message}\n\n`;
         }
       }
 
       if (context) {
-        const prompt = "Perform a comprehensive clinical analysis based on the provided medical documents and images. Identify abnormalities, critical values, and provide a structured report with Findings, Impressions, and Recommendations.";
+        setAnalysisStep("Correlating findings and generating report...");
+        setCachedContext(context);
+        const prompt = "Perform a comprehensive clinical analysis based on the provided medical documents and images. Identify abnormalities, critical values, and provide a structured report with Findings, Impressions, and Recommendations. Be specific and provide 'ground level' actionable insights.";
         result = await getRAGResponse(prompt, context, []);
       } else {
         result = "No readable content found in the uploaded files.";
@@ -259,25 +278,39 @@ export function ReportAnalyzer() {
     setNeedsKey(false);
 
     try {
-      let context = "";
-      // Re-extract context or use cached context (for simplicity we re-extract or use analysis as base)
-      // In a real app, we'd cache the context
-      for (const file of readyFiles) {
-        if (file.type === 'application/pdf') {
-          const text = await extractTextFromPDF(file.data);
-          context += `--- Document: ${file.name} ---\n${text}\n\n`;
-        } else if (file.type === 'text/plain') {
-          const text = atob(file.data);
-          context += `--- Document: ${file.name} ---\n${text}\n\n`;
+      let context = cachedContext;
+      
+      // If context is empty, try to re-extract (fallback)
+      if (!context) {
+        for (const file of readyFiles) {
+          try {
+            if (file.type === 'application/pdf') {
+              const text = await extractTextFromPDF(file.data);
+              context += `--- Document: ${file.name} ---\n${text}\n\n`;
+            } else if (file.type === 'text/plain') {
+              const binaryString = atob(file.data);
+              const bytes = new Uint8Array(binaryString.length);
+              for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+              }
+              const text = new TextDecoder().decode(bytes);
+              context += `--- Document: ${file.name} ---\n${text}\n\n`;
+            }
+          } catch (fileError: any) {
+            console.error(`Error processing file ${file.name} during chat:`, fileError);
+            context += `--- Document: ${file.name} (Processing Error) ---\n`;
+          }
         }
+        setCachedContext(context);
       }
       
       // Also include previous analysis if available
+      let fullContext = context;
       if (analysis) {
-        context += `--- Initial Analysis ---\n${analysis}\n\n`;
+        fullContext += `--- Initial Analysis ---\n${analysis}\n\n`;
       }
 
-      const result = await getRAGResponse(currentInput, context, chatHistory);
+      const result = await getRAGResponse(currentInput, fullContext, chatHistory);
       
       setChatHistory(prev => [...prev, { role: 'model', text: result }]);
     } catch (error: any) {
@@ -533,7 +566,7 @@ export function ReportAnalyzer() {
                   <Loader2 size={64} className="text-emerald-500 animate-spin relative" />
                 </div>
                 <div>
-                  <p className="text-xl font-bold text-zinc-100">Processing Medical Data</p>
+                  <p className="text-xl font-bold text-zinc-100">{analysisStep || "Processing Medical Data"}</p>
                   <p className="text-zinc-500 text-sm mt-2 max-w-xs mx-auto">
                     Our AI is scanning the document and correlating findings with clinical knowledge bases...
                   </p>

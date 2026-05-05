@@ -18,6 +18,9 @@ import {
   Clock,
   CheckCircle2,
   Trash2,
+  Brain,
+  CreditCard,
+  Check,
   Send as SendIcon
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -34,6 +37,8 @@ import { collection, onSnapshot, query, orderBy, limit, deleteDoc, doc, where, g
 import { useEffect } from 'react';
 
 import { AuthProvider, useAuth } from '../contexts/AuthProvider';
+import { useSettings } from '../contexts/SettingsContext';
+import { translations } from '../lib/translations';
 
 import { AddPatientModal } from './AddPatientModal';
 
@@ -53,7 +58,9 @@ type SortKey = 'name' | 'age' | 'lastVisit' | 'status';
 import { fetchWithRetry } from '../lib/fetchWithRetry';
 
 export function PatientList() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, isSuperAdmin } = useAuth();
+  const { language } = useSettings();
+  const t = translations[language as keyof typeof translations];
   const [patients, setPatients] = useState<Patient[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -69,6 +76,11 @@ export function PatientList() {
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<string | null>(null);
+  const [modalTab, setModalTab] = useState<'analysis' | 'history'>('analysis');
+  const [patientHistory, setPatientHistory] = useState<any[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const { user } = useAuth();
 
   const analyzePatient = async (patient: Patient) => {
     setIsAnalyzing(true);
@@ -98,8 +110,89 @@ export function PatientList() {
       analyzePatient(selectedPatient);
     } else if (!selectedPatient && analysis) {
       setAnalysis(null);
+      setModalTab('analysis');
     }
   }, [selectedPatient, analysis, isAnalyzing]);
+
+  useEffect(() => {
+    if (selectedPatient && modalTab === 'history') {
+      fetchPatientHistory(selectedPatient.id);
+    }
+  }, [selectedPatient, modalTab]);
+
+  const saveAnalysis = async () => {
+    if (!selectedPatient || !analysis || !user) return;
+
+    setIsSaving(true);
+    try {
+      const recordData = {
+        patientId: selectedPatient.id,
+        patientName: selectedPatient.name,
+        analysis: analysis,
+        date: new Date().toISOString(),
+        userId: user.uid,
+        timestamp: new Date()
+      };
+
+      await getDocs(query(collection(db, 'clinical_records'), limit(1))); // Test connection
+      const docRef = await getDocs(query(collection(db, 'clinical_records'), where('patientId', '==', selectedPatient.id), where('date', '==', recordData.date)));
+      
+      // Simple addDoc
+      const { addDoc } = await import('firebase/firestore');
+      await addDoc(collection(db, 'clinical_records'), recordData);
+      
+      toast.success('Clinical analysis saved to records');
+      // Refresh history if we are on history tab
+      if (modalTab === 'history') {
+        fetchPatientHistory(selectedPatient.id);
+      }
+    } catch (error) {
+      console.error('Error saving analysis:', error);
+      toast.error('Failed to save analysis to records');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const fetchPatientHistory = async (patientId: string) => {
+    setIsLoadingHistory(true);
+    try {
+      const q = query(
+        collection(db, 'clinical_records'),
+        where('patientId', '==', patientId),
+        orderBy('date', 'desc')
+      );
+      const snapshot = await getDocs(q);
+      const records = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), type: 'Clinical Analysis' }));
+      
+      const pq = query(
+        collection(db, 'prescriptions'),
+        where('patientId', '==', patientId),
+        orderBy('date', 'desc')
+      );
+      const psnapshot = await getDocs(pq);
+      const prescriptions = psnapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), type: 'Prescription' }));
+
+      const bq = query(
+        collection(db, 'bills'),
+        where('patientId', '==', patientId),
+        orderBy('date', 'desc')
+      );
+      const bsnapshot = await getDocs(bq);
+      const bills = bsnapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), type: 'Bill' }));
+
+      const combined = [...records, ...prescriptions, ...bills].sort((a: any, b: any) => 
+        new Date(b.date).getTime() - new Date(a.date).getTime()
+      );
+      
+      setPatientHistory(combined);
+    } catch (err) {
+      console.error('Error fetching history:', err);
+      toast.error('Failed to load patient history');
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
 
   useEffect(() => {
     // Fetch all patients for client-side sorting and filtering to handle "different date formats"
@@ -187,11 +280,14 @@ export function PatientList() {
       }
 
       // Fetch the latest upcoming appointment for this patient
+      let appointmentDate = '';
+      let appointmentTime = '';
       let appointmentInfo = '';
+      
       try {
         const q = query(
           collection(db, 'appointments'),
-          where('patientId', '==', patient.id),
+          where('patientName', '==', patient.name),
           where('date', '>=', new Date().toISOString().split('T')[0]),
           orderBy('date', 'asc'),
           limit(1)
@@ -199,7 +295,9 @@ export function PatientList() {
         const snapshot = await getDocs(q);
         if (!snapshot.empty) {
           const app = snapshot.docs[0].data();
-          appointmentInfo = ` scheduled for ${app.date} at ${app.time}`;
+          appointmentDate = app.date;
+          appointmentTime = app.time;
+          appointmentInfo = ` scheduled for ${appointmentDate} at ${appointmentTime}`;
         }
       } catch (err) {
         console.error('Error fetching appointment for reminder:', err);
@@ -210,22 +308,58 @@ export function PatientList() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           to: patient.email,
-          subject: `Medical Appointment Reminder - MedSight AI`,
-          text: `Hello ${patient.name},\n\nThis is a friendly reminder from MedSight AI regarding your upcoming medical check-up${appointmentInfo}. Please ensure you are available at your scheduled time.\n\nBest regards,\nMedSight AI Team`,
+          subject: `${t.reminderSubject}: ${appointmentDate ? appointmentDate : 'Upcoming'} Check-up - MedSight 2.0`,
+          text: `Hello ${patient.name},\n\nThis is a professional reminder from MedSight 2.0 regarding your upcoming medical check-up${appointmentInfo}.\n\n${t.appointmentDetails}:\n- ${t.date}: ${appointmentDate || 'To be confirmed'}\n- ${t.time}: ${appointmentTime || 'To be confirmed'}\n- ${t.location}: MedSight Clinical Center\n\n${t.instructions}: ${t.arriveEarly}\n\n${t.contact}: ${t.rescheduleNote}\n\nBest regards,\nMedSight 2.0 Clinical Team`,
           html: `
-            <div style="font-family: sans-serif; padding: 20px; color: #333; max-width: 600px; margin: auto; border: 1px solid #eee; border-radius: 10px;">
-              <div style="text-align: center; margin-bottom: 20px;">
-                <h1 style="color: #10b981; margin: 0;">MedSight AI</h1>
-                <p style="color: #666; margin: 5px 0;">Clinical Intelligence Platform</p>
+            <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 0; color: #1f2937; max-width: 600px; margin: auto; border: 1px solid #e5e7eb; border-radius: 16px; overflow: hidden; background-color: #ffffff;">
+              <div style="background-color: #10b981; padding: 30px 20px; text-align: center; color: white;">
+                <h1 style="margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.025em;">MedSight 2.0</h1>
+                <p style="margin: 5px 0 0 0; opacity: 0.9; font-size: 14px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em;">Agentic AI Healthcare Platform</p>
               </div>
-              <h2 style="color: #1f2937; border-bottom: 2px solid #10b981; padding-bottom: 10px;">Medical Appointment Reminder</h2>
-              <p>Hello <strong>${patient.name}</strong>,</p>
-              <p>This is a friendly reminder from <strong>MedSight AI</strong> regarding your upcoming medical check-up${appointmentInfo}.</p>
-              <p>Please ensure you are available at your scheduled time. If you need to reschedule or have any questions, please contact our clinic directly.</p>
-              <div style="background: #f9fafb; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                <p style="margin: 0; color: #4b5563; font-size: 14px;"><strong>Note:</strong> This is an automated reminder. Please do not reply directly to this email.</p>
+              
+              <div style="padding: 40px 30px;">
+                <h2 style="margin: 0 0 20px 0; font-size: 20px; font-weight: 700; color: #111827;">${t.reminderSubject}</h2>
+                <p style="font-size: 16px; line-height: 1.6; color: #4b5563; margin-bottom: 25px;">
+                  Hello <strong>${patient.name}</strong>,<br/><br/>
+                  This is a friendly reminder regarding your upcoming medical check-up at <strong>MedSight 2.0 Clinical Center</strong>.
+                </p>
+                
+                <div style="background-color: #f9fafb; border: 1px solid #f3f4f6; border-radius: 12px; padding: 25px; margin-bottom: 30px;">
+                  <h3 style="margin: 0 0 15px 0; font-size: 14px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">${t.appointmentDetails}</h3>
+                  <table style="width: 100%; border-collapse: collapse;">
+                    <tr>
+                      <td style="padding: 8px 0; color: #6b7280; font-size: 14px; width: 80px;">${t.date}:</td>
+                      <td style="padding: 8px 0; color: #111827; font-size: 15px; font-weight: 600;">${appointmentDate || 'To be confirmed'}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">${t.time}:</td>
+                      <td style="padding: 8px 0; color: #111827; font-size: 15px; font-weight: 600;">${appointmentTime || 'To be confirmed'}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">${t.location}:</td>
+                      <td style="padding: 8px 0; color: #111827; font-size: 15px; font-weight: 600;">MedSight Clinical Center</td>
+                    </tr>
+                  </table>
+                </div>
+                
+                <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 15px; margin-bottom: 30px;">
+                  <p style="margin: 0; font-size: 13px; color: #92400e; line-height: 1.5;">
+                    <strong>${t.instructions}:</strong> ${t.arriveEarly}
+                  </p>
+                </div>
+                
+                <p style="font-size: 14px; color: #6b7280; margin-bottom: 0;">
+                  ${t.rescheduleNote}
+                </p>
               </div>
-              <p>Best regards,<br/><strong>MedSight AI Team</strong></p>
+              
+              <div style="background-color: #f9fafb; padding: 20px 30px; border-top: 1px solid #e5e7eb; text-align: center;">
+                <p style="margin: 0; font-size: 14px; color: #4b5563;">Best regards,</p>
+                <p style="margin: 5px 0 0 0; font-size: 16px; font-weight: 700; color: #111827;">MedSight 2.0 Clinical Team</p>
+                <div style="margin-top: 20px; font-size: 11px; color: #9ca3af;">
+                  This is an automated message. Please do not reply directly to this email.
+                </div>
+              </div>
             </div>
           `
         })
@@ -512,7 +646,7 @@ export function PatientList() {
                   </td>
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          {isAdmin && (
+                          {isSuperAdmin && (
                             <button 
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -677,37 +811,151 @@ export function PatientList() {
 
                 <div className="lg:col-span-2 space-y-6">
                   <div className="bg-zinc-950 p-8 rounded-[2rem] border border-zinc-800 min-h-[400px] flex flex-col">
-                    <div className="flex items-center justify-between mb-6">
-                      <h3 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
-                        <Sparkles size={20} className="text-emerald-400" />
-                        AI Clinical Consultant
-                      </h3>
-                      {isAnalyzing && <Loader2 size={20} className="animate-spin text-emerald-500" />}
+                    <div className="flex items-center justify-between mb-6 border-b border-zinc-800 pb-4">
+                      <div className="flex gap-6">
+                        <button 
+                          onClick={() => setModalTab('analysis')}
+                          className={cn(
+                            "pb-4 text-sm font-bold uppercase tracking-widest transition-all relative",
+                            modalTab === 'analysis' ? "text-emerald-400" : "text-zinc-500 hover:text-zinc-300"
+                          )}
+                        >
+                          Clinical Analysis
+                          {modalTab === 'analysis' && (
+                            <motion.div layoutId="modalTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-400" />
+                          )}
+                        </button>
+                        <button 
+                          onClick={() => setModalTab('history')}
+                          className={cn(
+                            "pb-4 text-sm font-bold uppercase tracking-widest transition-all relative",
+                            modalTab === 'history' ? "text-emerald-400" : "text-zinc-500 hover:text-zinc-300"
+                          )}
+                        >
+                          Medical History
+                          {modalTab === 'history' && (
+                            <motion.div layoutId="modalTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-400" />
+                          )}
+                        </button>
+                      </div>
+                      {isAnalyzing && modalTab === 'analysis' && <Loader2 size={20} className="animate-spin text-emerald-500" />}
                     </div>
 
-                    <div className="flex-1 text-zinc-300 leading-relaxed">
-                      {isAnalyzing ? (
-                        <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
-                          <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center">
-                            <Loader2 size={24} className="animate-spin text-emerald-500" />
-                          </div>
-                          <p className="text-sm font-medium text-zinc-500">Medsight AI is analyzing patient history...</p>
-                        </div>
-                      ) : analysis ? (
-                        <div className="markdown-body prose prose-invert max-w-none">
-                          <ReactMarkdown>{analysis}</ReactMarkdown>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
-                          <div className="w-12 h-12 bg-zinc-900 rounded-2xl flex items-center justify-center text-zinc-700">
-                            <Sparkles size={24} />
-                          </div>
-                          <p className="text-sm font-medium text-zinc-500">Select a patient to generate AI clinical insights.</p>
-                        </div>
-                      )}
+                    <div className="flex-1">
+                      <AnimatePresence mode="wait">
+                        {modalTab === 'analysis' ? (
+                          <motion.div 
+                            key="analysis"
+                            initial={{ opacity: 0, x: -10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 10 }}
+                            className="text-zinc-300 leading-relaxed"
+                          >
+                            {isAnalyzing ? (
+                              <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
+                                <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center">
+                                  <Loader2 size={24} className="animate-spin text-emerald-500" />
+                                </div>
+                                <p className="text-sm font-medium text-zinc-500">Medsight AI is analyzing patient history...</p>
+                              </div>
+                            ) : analysis ? (
+                              <div className="markdown-body prose prose-invert max-w-none">
+                                <ReactMarkdown>{analysis}</ReactMarkdown>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
+                                <div className="w-12 h-12 bg-zinc-900 rounded-2xl flex items-center justify-center text-zinc-700">
+                                  <Sparkles size={24} />
+                                </div>
+                                <p className="text-sm font-medium text-zinc-500">Select a patient to generate AI clinical insights.</p>
+                              </div>
+                            )}
+                          </motion.div>
+                        ) : (
+                          <motion.div 
+                            key="history"
+                            initial={{ opacity: 0, x: 10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: -10 }}
+                            className="space-y-4"
+                          >
+                            {isLoadingHistory ? (
+                              <div className="flex flex-col items-center justify-center h-64 gap-4">
+                                <Loader2 size={32} className="animate-spin text-emerald-500" />
+                                <p className="text-zinc-500">Loading history...</p>
+                              </div>
+                            ) : patientHistory.length > 0 ? (
+                              <div className="space-y-4">
+                                {patientHistory.map((item) => (
+                                  <div key={item.id} className="bg-zinc-900/50 p-4 rounded-2xl border border-zinc-800 hover:border-zinc-700 transition-all group">
+                                    <div className="flex items-center justify-between mb-2">
+                                      <div className="flex items-center gap-2">
+                                        <div className={cn(
+                                          "p-1.5 rounded-lg",
+                                          item.type === 'Clinical Analysis' ? "bg-emerald-500/10 text-emerald-400" :
+                                          item.type === 'Prescription' ? "bg-blue-500/10 text-blue-400" :
+                                          "bg-amber-500/10 text-amber-400"
+                                        )}>
+                                          {item.type === 'Clinical Analysis' ? <Brain size={14} /> :
+                                           item.type === 'Prescription' ? <FileText size={14} /> :
+                                           <CreditCard size={14} />}
+                                        </div>
+                                        <span className="text-xs font-bold uppercase tracking-wider text-zinc-400">{item.type}</span>
+                                      </div>
+                                      <span className="text-[10px] font-bold text-zinc-500">{new Date(item.date).toLocaleDateString()}</span>
+                                    </div>
+                                    {item.type === 'Clinical Analysis' ? (
+                                      <p className="text-sm text-zinc-300 line-clamp-2">{item.analysis}</p>
+                                    ) : item.type === 'Prescription' ? (
+                                      <div className="space-y-1">
+                                        {item.medicines?.map((m: any, idx: number) => (
+                                          <p key={idx} className="text-sm text-zinc-300">• {m.name} ({m.dosage})</p>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <div className="flex justify-between items-center">
+                                        <p className="text-sm text-zinc-300">Amount: ₹{item.amount}</p>
+                                        <span className={cn(
+                                          "text-[10px] font-bold uppercase px-2 py-0.5 rounded-full",
+                                          item.status === 'paid' ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"
+                                        )}>{item.status}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="flex flex-col items-center justify-center h-64 gap-4 text-center">
+                                <Clock size={48} className="text-zinc-800" />
+                                <p className="text-zinc-600 text-sm">No historical records found.</p>
+                              </div>
+                            )}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
                     </div>
                   </div>
                 </div>
+              </div>
+
+              <div className="p-8 bg-zinc-950/50 border-t border-zinc-800 flex justify-end gap-3">
+                <button 
+                  onClick={() => setSelectedPatient(null)}
+                  className="px-6 py-3 bg-zinc-900 border border-zinc-800 text-zinc-400 rounded-2xl font-bold hover:bg-zinc-800 transition-all"
+                >
+                  Close
+                </button>
+                <button 
+                  onClick={saveAnalysis}
+                  disabled={isSaving || !analysis}
+                  className={cn(
+                    "px-6 py-3 bg-emerald-500 text-white rounded-2xl font-bold hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-500/20 flex items-center gap-2",
+                    (isSaving || !analysis) && "opacity-50 cursor-not-allowed"
+                  )}
+                >
+                  {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
+                  {isSaving ? 'Saving...' : 'Save to Records'}
+                </button>
               </div>
             </motion.div>
           </div>

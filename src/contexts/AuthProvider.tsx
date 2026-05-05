@@ -1,13 +1,19 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, onAuthStateChanged } from 'firebase/auth';
-import { auth, signInWithGoogle, logout } from '../lib/firebase';
+import { doc, getDoc } from 'firebase/firestore';
+import { auth, signInWithGoogle, logout, signInWithEmail, signUpWithEmail, db } from '../lib/firebase';
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
+  isSigningIn: boolean;
   signIn: () => Promise<void>;
+  signInEmail: (email: string, pass: string) => Promise<void>;
+  signUpEmail: (email: string, pass: string, name: string) => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
   isAdmin: boolean;
+  isSuperAdmin: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -15,22 +21,86 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [isAdminState, setIsAdminState] = useState(false);
 
-  const isAdmin = user?.email === 'satyamlokhande01@gmail.com' && user?.emailVerified === true;
+  const isSuperAdmin = user?.email === 'satyamlokhande01@gmail.com';
+  const isAdmin = isAdminState || isSuperAdmin;
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setUser(user);
+      
+      if (user) {
+        // Check if user is in admins collection
+        try {
+          const adminDoc = await getDoc(doc(db, 'admins', user.uid));
+          setIsAdminState(adminDoc.exists());
+        } catch (error) {
+          console.error("Error checking admin status:", error);
+          setIsAdminState(false);
+        }
+      } else {
+        setIsAdminState(false);
+      }
+      
       setLoading(false);
     });
     return () => unsubscribe();
   }, []);
 
   const signIn = async () => {
+    if (isSigningIn) return;
+    setIsSigningIn(true);
     try {
       await signInWithGoogle();
-    } catch (error) {
+    } catch (error: any) {
+      // Handle specific Firebase popup errors gracefully
+      if (error.code === 'auth/cancelled-popup-request' || 
+          error.code === 'auth/popup-closed-by-user') {
+        console.warn('Sign in popup was closed or cancelled');
+        return;
+      }
       console.error('Sign in error:', error);
+      throw error;
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
+  const signInEmail = async (email: string, pass: string) => {
+    if (isSigningIn) return;
+    setIsSigningIn(true);
+    try {
+      await signInWithEmail(email, pass);
+    } catch (error) {
+      console.error('Sign in email error:', error);
+      throw error;
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
+  const signUpEmail = async (email: string, pass: string, name: string) => {
+    if (isSigningIn) return;
+    setIsSigningIn(true);
+    try {
+      await signUpWithEmail(email, pass, name);
+    } catch (error) {
+      console.error('Sign up email error:', error);
+      throw error;
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
+  const handleResetPassword = async (email: string) => {
+    try {
+      const { resetPassword: fbResetPassword } = await import('../lib/firebase');
+      await fbResetPassword(email);
+    } catch (error) {
+      console.error('Reset password error:', error);
+      throw error;
     }
   };
 
@@ -43,7 +113,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, signOut, isAdmin }}>
+    <AuthContext.Provider value={{ user, loading, isSigningIn, signIn, signInEmail, signUpEmail, resetPassword: handleResetPassword, signOut, isAdmin, isSuperAdmin }}>
       {children}
     </AuthContext.Provider>
   );

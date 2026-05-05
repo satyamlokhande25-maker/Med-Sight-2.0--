@@ -1,25 +1,30 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useAuth } from './AuthProvider';
 import { db } from '@/lib/firebase';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 
 interface SettingsContextType {
   darkMode: boolean;
   language: string;
+  voiceName: string;
+  updateSettings: (newSettings: Partial<Omit<SettingsContextType, 'updateSettings'>>) => Promise<void>;
 }
 
 const SettingsContext = createContext<SettingsContextType>({
   darkMode: true,
   language: 'English',
+  voiceName: 'Kore',
+  updateSettings: async () => {},
 });
 
 export const useSettings = () => useContext(SettingsContext);
 
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
-  const [settings, setSettings] = useState<SettingsContextType>({
+  const [settings, setSettings] = useState<Omit<SettingsContextType, 'updateSettings'>>({
     darkMode: true,
     language: 'English',
+    voiceName: 'Kore',
   });
 
   useEffect(() => {
@@ -31,12 +36,26 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
         setSettings({
           darkMode: data.darkMode ?? true,
           language: data.language ?? 'English',
+          voiceName: data.voiceName ?? 'Kore',
         });
       }
     });
 
     return () => unsubscribe();
   }, [user]);
+
+  const updateSettings = async (newSettings: Partial<Omit<SettingsContextType, 'updateSettings'>>) => {
+    if (!user) return;
+    try {
+      await setDoc(doc(db, 'user_preferences', user.uid), {
+        ...settings,
+        ...newSettings
+      }, { merge: true });
+    } catch (err) {
+      console.error("Error updating settings:", err);
+      throw err;
+    }
+  };
 
   useEffect(() => {
     if (settings.darkMode) {
@@ -47,7 +66,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   }, [settings.darkMode]);
 
   return (
-    <SettingsContext.Provider value={settings}>
+    <SettingsContext.Provider value={{ ...settings, updateSettings }}>
       {children}
     </SettingsContext.Provider>
   );

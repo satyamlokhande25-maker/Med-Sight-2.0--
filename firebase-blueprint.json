@@ -1,5 +1,20 @@
 {
   "entities": {
+    "User": {
+      "title": "User",
+      "description": "A system user (Doctor or Staff)",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "role": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "lastLogin": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email"]
+    },
     "Patient": {
       "title": "Patient",
       "description": "A medical patient record",
@@ -86,6 +101,31 @@
         "language": { "type": "string" }
       },
       "required": ["emailNotifications", "pushNotifications", "smsAlerts", "appointmentReminders", "criticalPatientAlerts", "darkMode", "language"]
+    },
+    "Admin": {
+      "title": "Admin",
+      "description": "A system administrator with elevated privileges",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["super_admin", "admin"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "email", "role"]
+    },
+    "ClinicalRecord": {
+      "title": "ClinicalRecord",
+      "description": "An AI-generated clinical analysis record",
+      "type": "object",
+      "properties": {
+        "patientId": { "type": "string" },
+        "patientName": { "type": "string" },
+        "analysis": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" }
+      },
+      "required": ["patientId", "patientName", "analysis", "date", "userId"]
     }
   },
   "firestore": {
@@ -112,6 +152,18 @@
     "/user_preferences/{userId}": {
       "schema": "UserPreference",
       "description": "Collection of user preferences"
+    },
+    "/clinical_records/{recordId}": {
+      "schema": "ClinicalRecord",
+      "description": "Collection of AI-generated clinical analysis records"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of registered application users"
+    },
+    "/admins/{userId}": {
+      "schema": "Admin",
+      "description": "Collection of authorized system administrators"
     }
   }
 }

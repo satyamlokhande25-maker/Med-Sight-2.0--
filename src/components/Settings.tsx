@@ -12,7 +12,8 @@ import {
   Globe,
   Moon,
   Sun,
-  Loader2
+  Loader2,
+  Users
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -20,64 +21,16 @@ import { toast } from 'sonner';
 import { useAuth } from '../contexts/AuthProvider';
 import { db, handleFirestoreError, OperationType } from '@/lib/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-
-const translations: Record<string, any> = {
-  English: {
-    settings: 'Settings',
-    manage: 'Manage your account, notification preferences, and application settings.',
-    notifications: 'Notifications',
-    account: 'Account Info',
-    security: 'Security',
-    appearance: 'Appearance & Language',
-    save: 'Save Changes',
-    profile: 'Update Profile'
-  },
-  Hindi: {
-    settings: 'सेटिंग्स',
-    manage: 'अपने खाते, अधिसूचना प्राथमिकताओं और एप्लिकेशन सेटिंग्स का प्रबंधन करें।',
-    notifications: 'अधिसूचनाएं',
-    account: 'खाता जानकारी',
-    security: 'सुरक्षा',
-    appearance: 'दिखावट और भाषा',
-    save: 'परिवर्तन सहेजें',
-    profile: 'प्रोफ़ाइल अपडेट करें'
-  },
-  Spanish: {
-    settings: 'Ajustes',
-    manage: 'Administre su cuenta, preferencias de notificación y configuración de la aplicación.',
-    notifications: 'Notificaciones',
-    account: 'Información de la cuenta',
-    security: 'Seguridad',
-    appearance: 'Apariencia e Idioma',
-    save: 'Guardar cambios',
-    profile: 'Actualizar perfil'
-  },
-  French: {
-    settings: 'Paramètres',
-    manage: 'Gérez votre compte, vos préférences de notification et les paramètres de l\'application.',
-    notifications: 'Notifications',
-    account: 'Infos compte',
-    security: 'Sécurité',
-    appearance: 'Apparence et langue',
-    save: 'Sauvegarder les modifications',
-    profile: 'Mettre à jour le profil'
-  },
-  German: {
-    settings: 'Einstellungen',
-    manage: 'Verwalten Sie Ihr Konto, Ihre Benachrichtigungseinstellungen und Anwendungseinstellungen.',
-    notifications: 'Benachrichtigungen',
-    account: 'Kontoinformationen',
-    security: 'Sicherheit',
-    appearance: 'Erscheinungsbild & Sprache',
-    save: 'Änderungen speichern',
-    profile: 'Profil aktualisieren'
-  }
-};
-
 import { fetchWithRetry } from '../lib/fetchWithRetry';
 
+import { translations } from '@/lib/translations';
+import { useSettings } from '../contexts/SettingsContext';
+
+import { StaffManagement } from './StaffManagement';
+
 export function Settings() {
-  const { user } = useAuth();
+  const { user, isSuperAdmin } = useAuth();
+  const { darkMode, language, updateSettings } = useSettings();
   const [isSaving, setIsSaving] = useState(false);
   const [preferences, setPreferences] = useState({
     emailNotifications: true,
@@ -85,13 +38,11 @@ export function Settings() {
     smsAlerts: true,
     appointmentReminders: true,
     criticalPatientAlerts: true,
-    darkMode: true,
-    language: 'English'
   });
 
-  const t = translations[preferences.language] || translations.English;
+  const t = translations[language] || translations.English;
 
-  const [activeSection, setActiveSection] = useState<'notifications' | 'account' | 'security' | 'appearance'>('notifications');
+  const [activeSection, setActiveSection] = useState<'notifications' | 'account' | 'security' | 'appearance' | 'staff'>('notifications');
 
   useEffect(() => {
     if (!user) return;
@@ -118,7 +69,13 @@ export function Settings() {
     const toastId = toast.loading('Saving preferences...');
     
     try {
-      await setDoc(doc(db, 'user_preferences', user.uid), preferences);
+      // Save local preferences
+      await setDoc(doc(db, 'user_preferences', user.uid), preferences, { merge: true });
+      
+      // Also ensure context is updated (though it should be already if we call updateSettings on change)
+      // But here we might want to save everything at once if the user expects a "Save" button for all.
+      // However, theme and language are usually immediate.
+      
       toast.success('Preferences saved successfully', { id: toastId });
     } catch (err) {
       console.error("Error saving preferences:", err);
@@ -227,7 +184,22 @@ export function Settings() {
               <Globe size={18} />
               {t.appearance}
             </button>
+            {isSuperAdmin && (
+              <button 
+                onClick={() => setActiveSection('staff')}
+                className={cn(
+                  "w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition-all border",
+                  activeSection === 'staff' 
+                    ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" 
+                    : "text-zinc-500 hover:bg-zinc-900 border-transparent"
+                )}
+              >
+                <Users size={18} />
+                Staff Management
+              </button>
+            )}
           </nav>
+
 
 
           <div className="bg-zinc-900 p-6 rounded-3xl border border-zinc-800 space-y-4">
@@ -235,10 +207,10 @@ export function Settings() {
               <div className="p-2 bg-blue-500/10 rounded-xl text-blue-500">
                 <Mail size={20} />
               </div>
-              <h3 className="font-bold text-zinc-100">Quick Tips</h3>
+              <h3 className="font-bold text-zinc-100">{t.quickTips}</h3>
             </div>
             <p className="text-[10px] text-zinc-500 leading-relaxed">
-              Keep your profile updated to ensure AI insights are personalized to your clinical practice.
+              {t.profileNote}
             </p>
           </div>
         </div>
@@ -256,7 +228,7 @@ export function Settings() {
                 <div className="space-y-6">
                   <h2 className="text-xl font-bold text-zinc-100 flex items-center gap-3">
                     <Bell size={24} className="text-emerald-500" />
-                    Notification Channels
+                    {t.notifications}
                   </h2>
                   
                   <div className="space-y-4">
@@ -266,7 +238,7 @@ export function Settings() {
                           <Mail size={20} />
                         </div>
                         <div>
-                          <p className="font-bold text-zinc-100">Email Notifications</p>
+                          <p className="font-bold text-zinc-100">{t.emailNotifications}</p>
                           <p className="text-xs text-zinc-500">Receive summaries and reports via email.</p>
                         </div>
                       </div>
@@ -290,7 +262,7 @@ export function Settings() {
                           <Smartphone size={20} />
                         </div>
                         <div>
-                          <p className="font-bold text-zinc-100">Push Notifications</p>
+                          <p className="font-bold text-zinc-100">{t.pushNotifications}</p>
                           <p className="text-xs text-zinc-500">Real-time alerts on your browser or mobile.</p>
                         </div>
                       </div>
@@ -313,13 +285,13 @@ export function Settings() {
                 <div className="space-y-6">
                   <h2 className="text-xl font-bold text-zinc-100 flex items-center gap-3">
                     <AlertCircle size={24} className="text-amber-500" />
-                    Alert Preferences
+                    {t.alertPreferences}
                   </h2>
                   
                   <div className="space-y-4">
                     <div className="flex items-center justify-between p-4 bg-zinc-950 rounded-2xl border border-zinc-800">
                       <div>
-                        <p className="font-bold text-zinc-100">Appointment Reminders</p>
+                        <p className="font-bold text-zinc-100">{t.appointmentReminders}</p>
                         <p className="text-xs text-zinc-500">Notify me 30 minutes before every appointment.</p>
                       </div>
                       <button 
@@ -338,7 +310,7 @@ export function Settings() {
 
                     <div className="flex items-center justify-between p-4 bg-zinc-950 rounded-2xl border border-zinc-800">
                       <div>
-                        <p className="font-bold text-zinc-100">Critical Patient Alerts</p>
+                        <p className="font-bold text-zinc-100">{t.criticalPatientAlerts}</p>
                         <p className="text-xs text-zinc-500">Immediate notification for status changes to 'Critical'.</p>
                       </div>
                       <button 
@@ -380,7 +352,7 @@ export function Settings() {
               >
                 <h2 className="text-xl font-bold text-zinc-100 flex items-center gap-3">
                   <User size={24} className="text-blue-500" />
-                  Account Information
+                  {t.account}
                 </h2>
 
                 <div className="flex items-center gap-6 p-6 bg-zinc-950 rounded-3xl border border-zinc-800">
@@ -454,7 +426,7 @@ export function Settings() {
                 <div className="space-y-6">
                   <h2 className="text-xl font-bold text-zinc-100 flex items-center gap-3">
                     <Shield size={24} className="text-red-500" />
-                    Security & API
+                    {t.securitySettings}
                   </h2>
 
                   <div className="bg-zinc-950 p-6 rounded-3xl border border-zinc-800 space-y-4">
@@ -480,7 +452,7 @@ export function Settings() {
                         className="w-full py-3 bg-emerald-500/10 text-emerald-500 rounded-2xl text-sm font-bold hover:bg-emerald-500/20 transition-all border border-emerald-500/20 flex items-center justify-center gap-2"
                       >
                         {isTesting ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle2 size={18} />}
-                        Test SMTP Connection
+                        {t.testConnection}
                       </button>
                     </div>
                   </div>
@@ -493,13 +465,13 @@ export function Settings() {
                       <h3 className="font-bold text-zinc-100">AI Model Access</h3>
                     </div>
                     <p className="text-xs text-zinc-500 leading-relaxed">
-                      MedSight 2.0 uses high-performance AI models. Ensure your API keys are correctly configured for full functionality.
+                      {t.apiNote}
                     </p>
                     <button 
                       onClick={handleOpenKeyDialog}
                       className="w-full py-3 bg-zinc-800 text-zinc-100 rounded-2xl text-sm font-bold hover:bg-zinc-700 transition-all border border-zinc-700"
                     >
-                      Configure API Keys
+                      {t.configureKeys}
                     </button>
                   </div>
                 </div>
@@ -516,54 +488,75 @@ export function Settings() {
               >
                 <h2 className="text-xl font-bold text-zinc-100 flex items-center gap-3">
                   <Globe size={24} className="text-blue-500" />
-                  Appearance & Language
+                  {t.appearance}
                 </h2>
 
                 <div className="space-y-6">
                   <div className="p-6 bg-zinc-950 rounded-3xl border border-zinc-800">
-                    <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-4">Theme Preference</p>
+                    <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-4">{t.themePreference}</p>
                     <div className="grid grid-cols-2 gap-4">
                       <button 
-                        onClick={() => setPreferences(prev => ({ ...prev, darkMode: true }))}
+                        onClick={() => updateSettings({ darkMode: true })}
                         className={cn(
                           "py-4 rounded-2xl text-sm font-bold flex items-center justify-center gap-3 transition-all border",
-                          preferences.darkMode 
+                          darkMode 
                             ? "bg-emerald-500/10 border-emerald-500 text-emerald-500" 
                             : "bg-zinc-900 border-zinc-800 text-zinc-500 hover:bg-zinc-800"
                         )}
                       >
                         <Moon size={18} />
-                        Dark Mode
+                        {t.darkMode}
                       </button>
                       <button 
-                        onClick={() => setPreferences(prev => ({ ...prev, darkMode: false }))}
+                        onClick={() => updateSettings({ darkMode: false })}
                         className={cn(
                           "py-4 rounded-2xl text-sm font-bold flex items-center justify-center gap-3 transition-all border",
-                          !preferences.darkMode 
+                          !darkMode 
                             ? "bg-emerald-500/10 border-emerald-500 text-emerald-500" 
                             : "bg-zinc-900 border-zinc-800 text-zinc-500 hover:bg-zinc-800"
                         )}
                       >
                         <Sun size={18} />
-                        Light Mode
+                        {t.lightMode}
                       </button>
                     </div>
                   </div>
 
                   <div className="p-6 bg-zinc-950 rounded-3xl border border-zinc-800">
-                    <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-4">System Language</p>
+                    <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-4">AI Consultant Voice</p>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                      {['Kore', 'Charon', 'Puck', 'Fenrir', 'Zephyr'].map((v) => (
+                        <button 
+                          key={v}
+                          onClick={() => updateSettings({ voiceName: v })}
+                          className={cn(
+                            "py-3 rounded-xl text-xs font-bold transition-all border",
+                            (useSettings().voiceName === v)
+                              ? "bg-emerald-500/10 border-emerald-500 text-emerald-500" 
+                              : "bg-zinc-900 border-zinc-800 text-zinc-500 hover:bg-zinc-800"
+                          )}
+                        >
+                          {v}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-zinc-500 mt-3">Choose the voice for your Live AI Consultant.</p>
+                  </div>
+
+                  <div className="p-6 bg-zinc-950 rounded-3xl border border-zinc-800">
+                    <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-4">{t.systemLanguage}</p>
                     <select 
-                      value={preferences.language}
-                      onChange={(e) => setPreferences(prev => ({ ...prev, language: e.target.value }))}
+                      value={language}
+                      onChange={(e) => updateSettings({ language: e.target.value as any })}
                       className="w-full bg-zinc-900 border border-zinc-800 text-zinc-100 rounded-2xl px-4 py-4 text-sm font-bold focus:outline-none focus:border-emerald-500 appearance-none"
                     >
-                      <option>English</option>
-                      <option>Spanish</option>
-                      <option>French</option>
-                      <option>German</option>
-                      <option>Hindi</option>
+                      <option value="English">English</option>
+                      <option value="Spanish">Spanish</option>
+                      <option value="French">French</option>
+                      <option value="German">German</option>
+                      <option value="Hindi">Hindi</option>
                     </select>
-                    <p className="text-[10px] text-zinc-500 mt-3">Changing language will update the UI labels and AI response style.</p>
+                    <p className="text-[10px] text-zinc-500 mt-3">{t.languageNote}</p>
                   </div>
                 </div>
 
@@ -574,9 +567,21 @@ export function Settings() {
                     className="px-8 py-3 bg-emerald-500 text-white rounded-2xl font-bold hover:bg-emerald-600 disabled:opacity-50 transition-all flex items-center gap-2 shadow-lg shadow-emerald-500/20"
                   >
                     {isSaving ? <Loader2 size={20} className="animate-spin" /> : <Save size={20} />}
-                    Save Changes
+                    {t.save}
                   </button>
                 </div>
+              </motion.section>
+            )}
+
+            {activeSection === 'staff' && (
+              <motion.section 
+                key="staff"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="bg-zinc-900 rounded-[2.5rem] border border-zinc-800 p-8 space-y-8"
+              >
+                <StaffManagement />
               </motion.section>
             )}
           </AnimatePresence>

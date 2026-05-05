@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Image as ImageIcon, 
   Sparkles, 
@@ -18,9 +18,31 @@ export function MedicalImaging() {
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
+  const [isFallback, setIsFallback] = useState(false);
   const [aspectRatio, setAspectRatio] = useState('1:1');
   const [error, setError] = useState<string | null>(null);
   const [needsKey, setNeedsKey] = useState(false);
+  const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
+
+  const loadingMessages = [
+    "Analyzing anatomical request...",
+    "Consulting medical database...",
+    "Synthesizing clinical visualization...",
+    "Applying high-definition textures...",
+    "Finalizing medical illustration..."
+  ];
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isGenerating) {
+      interval = setInterval(() => {
+        setLoadingMessageIndex((prev) => (prev + 1) % loadingMessages.length);
+      }, 4000);
+    } else {
+      setLoadingMessageIndex(0);
+    }
+    return () => clearInterval(interval);
+  }, [isGenerating]);
 
   const handleGenerate = async () => {
     if (!prompt.trim() || isGenerating) return;
@@ -37,12 +59,14 @@ export function MedicalImaging() {
 
     setIsGenerating(true);
     setGeneratedImage(null);
+    setIsFallback(false);
     setError(null);
     setNeedsKey(false);
 
     try {
       const result = await generateImage(prompt, aspectRatio);
       setGeneratedImage(result.url);
+      setIsFallback(result.isFallback);
     } catch (error: any) {
       console.error("Image generation error:", error);
       const errorMsg = error.message || "";
@@ -176,6 +200,21 @@ export function MedicalImaging() {
                   className="max-w-full max-h-full rounded-2xl shadow-2xl"
                   referrerPolicy="no-referrer"
                 />
+                {isFallback && (
+                  <div className="absolute bottom-6 left-6 right-6 bg-amber-500/90 backdrop-blur p-3 rounded-xl flex items-center justify-between gap-3 text-white shadow-lg">
+                    <div className="flex items-center gap-2">
+                      <AlertCircle size={16} />
+                      <p className="text-[10px] font-bold uppercase tracking-wider">Shared Quota Exceeded • Fallback Mode</p>
+                    </div>
+                    <button 
+                      onClick={handleOpenKeyDialog}
+                      className="px-3 py-1 bg-white text-amber-600 rounded-lg text-[10px] font-bold hover:bg-zinc-100 transition-all flex items-center gap-1"
+                    >
+                      <Key size={10} />
+                      Use Personal Key
+                    </button>
+                  </div>
+                )}
                 <div className="absolute top-6 right-6 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                   <a 
                     href={generatedImage} 
@@ -208,7 +247,7 @@ export function MedicalImaging() {
           {isGenerating && (
             <div className="absolute inset-0 bg-zinc-950/60 backdrop-blur-sm flex flex-col items-center justify-center gap-4">
               <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-              <p className="text-emerald-500 font-bold animate-pulse">Synthesizing Medical Data...</p>
+              <p className="text-emerald-500 font-bold animate-pulse">{loadingMessages[loadingMessageIndex]}</p>
             </div>
           )}
         </div>

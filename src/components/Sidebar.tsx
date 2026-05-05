@@ -13,11 +13,14 @@ import {
   Menu,
   X,
   Activity,
+  Clock,
   FileSearch,
   FileText,
   Calendar,
   CreditCard,
-  BarChart3
+  BarChart3,
+  Brain,
+  Sparkles
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -30,26 +33,30 @@ interface SidebarProps {
   setActiveTab: (tab: string) => void;
 }
 
-const menuItems = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'patients', label: 'Patients', icon: Users },
-  { id: 'prescriptions', label: 'Prescriptions', icon: FileText },
-  { id: 'calendar', label: 'Calendar', icon: Calendar },
-  { id: 'billing', label: 'Billing', icon: CreditCard },
-  { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-  { id: 'analyzer', label: 'Report Analyzer', icon: FileSearch },
-  { id: 'chat', label: 'AI Assistant', icon: MessageSquare },
-  { id: 'live', label: 'Live Consult', icon: Mic },
-  { id: 'imaging', label: 'Medical Imaging', icon: ImageIcon },
-  { id: 'education', label: 'Patient Education', icon: Video },
-  { id: 'research', label: 'Medical Research', icon: Search },
-  { id: 'locator', label: 'Clinic Locator', icon: MapPin },
-];
+import { translations } from '@/lib/translations';
 
 export function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
   const [isOpen, setIsOpen] = useState(true);
   const { signOut } = useAuth();
-  const { darkMode } = useSettings();
+  const { darkMode, language } = useSettings();
+  const t = translations[language] || translations.English;
+
+  const menuItems = [
+    { id: 'dashboard', label: t.nav_dashboard, icon: LayoutDashboard },
+    { id: 'patients', label: t.nav_patients, icon: Users },
+    { id: 'prescriptions', label: t.nav_prescriptions, icon: FileText },
+    { id: 'calendar', label: t.nav_calendar, icon: Calendar },
+    { id: 'billing', label: t.nav_billing, icon: CreditCard },
+    { id: 'analytics', label: t.nav_analytics, icon: BarChart3 },
+    { id: 'analyzer', label: t.nav_analyzer, icon: FileSearch },
+    { id: 'chat', label: t.nav_chat, icon: MessageSquare },
+    { id: 'live', label: t.nav_live, icon: Mic },
+    { id: 'imaging', label: t.nav_imaging, icon: ImageIcon },
+    { id: 'education', label: t.nav_education, icon: Video },
+    { id: 'research', label: t.nav_research, icon: Search },
+    { id: 'locator', label: t.nav_locator, icon: MapPin },
+    { id: 'history', label: t.nav_history, icon: Clock },
+  ];
 
   return (
     <>
@@ -77,22 +84,32 @@ export function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
         )}
       >
         <div className="p-6 flex items-center gap-3">
-          <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center text-white shrink-0 shadow-lg shadow-emerald-500/20">
-            <Activity size={24} />
+          <div className="relative w-10 h-10 shrink-0">
+            <div className="absolute inset-0 bg-emerald-500 rounded-xl flex items-center justify-center text-white shadow-lg shadow-emerald-500/20 rotate-3">
+              <Brain size={22} />
+            </div>
+            <div className="absolute -top-1 -right-1 w-5 h-5 bg-amber-400 rounded-lg flex items-center justify-center text-zinc-900 shadow-sm animate-pulse">
+              <Sparkles size={12} />
+            </div>
           </div>
           <AnimatePresence>
             {isOpen && (
-              <motion.span 
+              <motion.div 
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -10 }}
-                className={cn(
-                  "text-xl font-bold tracking-tight whitespace-nowrap transition-colors duration-300",
-                  darkMode ? "text-white" : "text-zinc-900"
-                )}
+                className="flex flex-col"
               >
-                MedSight 2.0
-              </motion.span>
+                <span className={cn(
+                  "text-lg font-bold tracking-tight leading-none transition-colors duration-300",
+                  darkMode ? "text-white" : "text-zinc-900"
+                )}>
+                  MedSight 2.0
+                </span>
+                <span className="text-[10px] font-medium text-emerald-500 uppercase tracking-widest mt-0.5">
+                  Agentic AI Platform
+                </span>
+              </motion.div>
             )}
           </AnimatePresence>
         </div>

@@ -50,7 +50,35 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && 
-        (request.auth.token.email == "satyamlokhande01@gmail.com");
+        (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) || 
+         request.auth.token.email == "satyamlokhande01@gmail.com");
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated() && (request.auth.token.email == "satyamlokhande01@gmail.com");
+    }
+
+    function isValidAdmin(data) {
+      return data.keys().hasAll(['userId', 'email', 'role']) &&
+             data.userId is string &&
+             data.email is string &&
+             data.role in ['super_admin', 'admin'];
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    match /admins/{userId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isSuperAdmin() && isValidAdmin(request.resource.data);
+      allow delete: if isSuperAdmin();
+    }
+
+    // Any logged-in user is a "Doctor"
+    function isDoctor() {
+      return isAuthenticated();
     }
 
     function isValidPatient(data) {
@@ -98,15 +126,24 @@ service cloud.firestore {
              data.language is string;
     }
 
+    function isValidClinicalRecord(data) {
+      return data.keys().hasAll(['patientId', 'patientName', 'analysis', 'date', 'userId']) &&
+             data.patientId is string &&
+             data.patientName is string &&
+             data.analysis is string && data.analysis.size() > 0 && data.analysis.size() <= 10000 &&
+             data.date is string &&
+             data.userId == request.auth.uid;
+    }
+
     match /patients/{patientId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isAdmin() && isValidPatient(request.resource.data);
+      allow read: if isDoctor();
+      allow create, update: if isDoctor() && isValidPatient(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /appointments/{appointmentId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow read: if isDoctor();
+      allow write: if isDoctor();
     }
 
     match /tasks/{taskId} {
@@ -117,20 +154,26 @@ service cloud.firestore {
     }
 
     match /prescriptions/{prescriptionId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isAdmin() && isValidPrescription(request.resource.data);
+      allow read: if isDoctor();
+      allow create, update: if isDoctor() && isValidPrescription(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /bills/{billId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isAdmin() && isValidBill(request.resource.data);
+      allow read: if isDoctor();
+      allow create, update: if isDoctor() && isValidBill(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /user_preferences/{userId} {
       allow read: if isAuthenticated() && request.auth.uid == userId;
       allow write: if isAuthenticated() && request.auth.uid == userId && isValidUserPreference(request.resource.data);
+    }
+
+    match /clinical_records/{recordId} {
+      allow read: if isDoctor();
+      allow create: if isDoctor() && isValidClinicalRecord(request.resource.data);
+      allow delete: if isAdmin();
     }
   }
 }

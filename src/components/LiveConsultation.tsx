@@ -17,8 +17,12 @@ import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI, Modality, LiveServerMessage } from "@google/genai";
 import { liveModel, getApiKey } from '@/services/gemini';
 import { Key } from 'lucide-react';
+import { useAuth } from '../contexts/AuthProvider';
+import { useSettings } from '../contexts/SettingsContext';
 
 export function LiveConsultation() {
+  const { user } = useAuth();
+  const { darkMode, voiceName } = useSettings();
   const [isConnecting, setIsConnecting] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
@@ -29,6 +33,7 @@ export function LiveConsultation() {
   const sessionRef = useRef<any>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const nextStartTimeRef = useRef<number>(0);
 
   useEffect(() => {
     return () => {
@@ -60,6 +65,10 @@ export function LiveConsultation() {
             if (message.serverContent?.modelTurn?.parts[0]?.text) {
               setTranscript(prev => [...prev, { role: 'model', text: message.serverContent!.modelTurn!.parts[0].text! }]);
             }
+            if (message.serverContent?.interrupted) {
+              // Reset scheduler on interruption
+              nextStartTimeRef.current = 0;
+            }
           },
           onclose: () => {
             stopConsultation();
@@ -72,9 +81,9 @@ export function LiveConsultation() {
         config: {
           responseModalities: [Modality.AUDIO],
           speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } },
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName as any } },
           },
-          systemInstruction: "You are Medsight AI, a real-time clinical assistant. You are helping a doctor during a consultation. Provide quick, accurate medical insights and help with diagnosis based on the conversation.",
+          systemInstruction: "You are Medsight AI, a professional real-time clinical assistant. You are helping a doctor during a consultation. Provide quick, accurate medical insights and help with diagnosis based on the conversation. Speak clearly, professionally, and with a clean, clinical tone. Avoid background noise artifacts.",
         },
       });
       sessionRef.current = session;
@@ -107,6 +116,7 @@ export function LiveConsultation() {
       audioContextRef.current.close().catch(err => console.error("Error closing AudioContext:", err));
     }
     audioContextRef.current = null;
+    nextStartTimeRef.current = 0;
     
     setIsConnected(false);
     setIsConnecting(false);
@@ -120,7 +130,8 @@ export function LiveConsultation() {
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
-      audioContextRef.current = new AudioContext({ sampleRate: 16000 });
+      // Using 24kHz for better quality with Gemini Live
+      audioContextRef.current = new AudioContext({ sampleRate: 24000 });
       const source = audioContextRef.current.createMediaStreamSource(stream);
       const processor = audioContextRef.current.createScriptProcessor(4096, 1, 1);
 
@@ -136,7 +147,7 @@ export function LiveConsultation() {
         }
         const base64Data = btoa(String.fromCharCode(...new Uint8Array(pcmData.buffer)));
         sessionRef.current.sendRealtimeInput({
-          audio: { data: base64Data, mimeType: 'audio/pcm;rate=16000' }
+          audio: { data: base64Data, mimeType: 'audio/pcm;rate=24000' }
         });
       };
     } catch (error) {
@@ -146,22 +157,35 @@ export function LiveConsultation() {
 
   const playAudio = (base64Data: string) => {
     if (!isSpeakerOn || !audioContextRef.current || audioContextRef.current.state === 'closed') return;
+    
     const binaryString = atob(base64Data);
     const bytes = new Uint8Array(binaryString.length);
     for (let i = 0; i < binaryString.length; i++) {
       bytes[i] = binaryString.charCodeAt(i);
     }
+    
     const pcmData = new Int16Array(bytes.buffer);
     const floatData = new Float32Array(pcmData.length);
     for (let i = 0; i < pcmData.length; i++) {
       floatData[i] = pcmData[i] / 0x7FFF;
     }
-    const buffer = audioContextRef.current.createBuffer(1, floatData.length, 16000);
+    
+    const sampleRate = 24000;
+    const buffer = audioContextRef.current.createBuffer(1, floatData.length, sampleRate);
     buffer.getChannelData(0).set(floatData);
+    
     const source = audioContextRef.current.createBufferSource();
     source.buffer = buffer;
     source.connect(audioContextRef.current.destination);
-    source.start();
+    
+    // Audio Scheduling for gapless playback
+    const currentTime = audioContextRef.current.currentTime;
+    if (nextStartTimeRef.current < currentTime) {
+      nextStartTimeRef.current = currentTime + 0.1; // Increased buffer for smoother playback
+    }
+    
+    source.start(nextStartTimeRef.current);
+    nextStartTimeRef.current += buffer.duration;
   };
 
   return (

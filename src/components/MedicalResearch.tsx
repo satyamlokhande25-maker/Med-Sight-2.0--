@@ -12,14 +12,15 @@ import {
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
-import { getGroqResponse } from '@/services/groq';
-import { Key, Settings } from 'lucide-react';
+import { getGeminiResponse, liteModel } from '../services/gemini';
+import { getGroqResponse } from '../services/groq';
+import { toast } from 'sonner';
 
 export function MedicalResearch() {
   const [query, setQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
-  const [result, setResult] = useState<{ text: string; sources: any[] } | null>(null);
   const [needsKey, setNeedsKey] = useState(false);
+  const [result, setResult] = useState<{ text: string; sources: any[]; searchEntryPoint?: string } | null>(null);
 
   const handleSearch = async () => {
     if (!query.trim() || isSearching) return;
@@ -29,31 +30,97 @@ export function MedicalResearch() {
     setNeedsKey(false);
 
     try {
-      const prompt = `You are a medical research assistant. Provide a highly detailed, evidence-based summary of the latest research and clinical insights for the following query: "${query}". Include citations if possible (even if they are from your training data). Structure your response with clear headings.`;
-      const response = await getGroqResponse([{ role: 'user', content: prompt }]);
-      setResult({ text: response, sources: [] });
+      // Step 1: Attempt to get search grounding from Gemini (using Lite for best quota availability)
+      let searchSources: any[] = [];
+      let searchEntryPoint: string | undefined = undefined;
+
+      try {
+        const tools = [{ googleSearch: {} }];
+        const systemInstruction = "You are a medical research search engine. Your ONLY task is to find high-quality, verified medical sources and clinical trials. Return a list of the most relevant sources found.";
+        
+        // Use liteModel (Gemini 1.5 Flash) for best quota reliability
+        // Pass tools at the top level for better SDK support
+        const searchResponse = await getGeminiResponse(query, liteModel, { systemInstruction }, tools as any);
+        
+        if (typeof searchResponse === 'object' && searchResponse.groundingMetadata) {
+          const metadata = searchResponse.groundingMetadata;
+          
+          if (metadata.groundingChunks) {
+            searchSources = metadata.groundingChunks
+              .map((chunk: any) => chunk.web || chunk.place)
+              .filter((source: any) => source && (source.uri || source.uri) && (source.title || source.placeName))
+              .map((source: any) => ({
+                title: source.title || source.placeName,
+                uri: source.uri
+              }));
+          }
+          
+          searchEntryPoint = metadata.searchEntryPoint?.renderedContent;
+        }
+      } catch (searchError: any) {
+        const errorMsg = searchError.message?.toLowerCase() || "";
+        const isQuotaError = errorMsg.includes("quota") || errorMsg.includes("429") || errorMsg.includes("resource_exhausted");
+        
+        if (isQuotaError) {
+          console.warn("Search grounding quota hit, proceeding with Groq knowledge base.");
+          toast.info("Live search quota reached. Using AI medical knowledge base.", {
+            description: "For live web search, please add your own API key in settings."
+          });
+        } else {
+          console.warn("Search grounding failed:", searchError);
+        }
+      }
+
+      // Step 2: Use Groq for high-performance synthesis
+      const searchContext = searchSources.length > 0 
+        ? `\n\nVerified Search Results for context:\n${searchSources.map((s, i) => `[Source ${i+1}]: ${s.title} - ${s.uri}`).join('\n')}`
+        : "";
+
+      const groqMessages = [
+        { 
+          role: 'system' as const, 
+          content: `You are a world-class medical research assistant. Provide a highly detailed, evidence-based summary of the latest research and clinical insights. 
+          
+          CRITICAL INSTRUCTIONS:
+          1. Provide specific clinical data, trial results, or guideline updates.
+          2. Use the provided search results if available to ground your answer in the latest evidence.
+          3. If no search results are provided, rely on your extensive internal medical knowledge.
+          4. Structure your response with clear headings (e.g., Clinical Overview, Recent Breakthroughs, Treatment Protocols).
+          5. Include a medical disclaimer at the end.${searchContext}` 
+        },
+        { role: 'user' as const, content: query }
+      ];
+
+      const groqResponse = await getGroqResponse(groqMessages);
+      
+      setResult({ 
+        text: groqResponse || "No insights generated.", 
+        sources: searchSources, 
+        searchEntryPoint: searchEntryPoint 
+      });
+
     } catch (error: any) {
       console.error("Search error:", error);
-      let msg = "Error performing search. Please try again.";
-      const errorMsg = error.message || "";
-      const isQuotaError = errorMsg.includes("429") || errorMsg.includes("RESOURCE_EXHAUSTED") || errorMsg.includes("quota") || errorMsg.includes("limit");
+      const errorMsg = error.message?.toLowerCase() || "";
+      const isQuotaError = errorMsg.includes("quota") || errorMsg.includes("429") || errorMsg.includes("resource_exhausted");
+      let msg = error.message || "Error performing search. Please try again.";
 
-      if (errorMsg.includes("GROQ_API_KEY_MISSING") || errorMsg.includes("API_KEY_MISSING") || errorMsg.includes("API_KEY_DENIED") || errorMsg.includes("401") || errorMsg.includes("403")) {
+      if (error.message?.includes("API_KEY_INVALID") || error.message?.includes("not found") || error.message?.includes("MISSING")) {
+        msg = "⚠️ **API Key Issue.** Please check your Gemini API key in the project settings or use the 'Fix API Key' button.";
         setNeedsKey(true);
-        msg = "⚠️ **API Key is missing or invalid.**\n\nPlease check your settings or use the 'Fix API Key' button.";
       } else if (isQuotaError) {
+        msg = "❌ **Quota Exceeded.** The shared AI quota for this feature has been reached. Please select your own personal API key to continue with high-quality research.";
         setNeedsKey(true);
-        msg = "❌ **Quota Exceeded.** The shared AI quota has been reached. Please select your own personal API key to continue.";
-      } else {
-        msg = `❌ **Error:** ${errorMsg}`;
       }
+      
       setResult({ text: msg, sources: [] });
+      toast.error(isQuotaError ? "Quota Exceeded" : "Search Error");
     } finally {
       setIsSearching(false);
     }
   };
 
-  const handleOpenSettings = async () => {
+  const handleOpenKeyDialog = async () => {
     if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
       await window.aistudio.openSelectKey();
     }
@@ -63,7 +130,7 @@ export function MedicalResearch() {
     <div className="space-y-8">
       <header>
         <h1 className="text-4xl font-bold text-zinc-100 tracking-tight">Medical Research & Insights</h1>
-        <p className="text-zinc-400 mt-2">Access the latest medical research, clinical trials, and evidence-based insights powered by Groq's high-speed inference.</p>
+        <p className="text-zinc-400 mt-2">Access the latest medical research, clinical trials, and evidence-based insights powered by Groq AI with real-time search grounding.</p>
       </header>
 
       <div className="bg-zinc-900 p-8 rounded-3xl border border-zinc-800 shadow-sm space-y-8">
@@ -102,18 +169,20 @@ export function MedicalResearch() {
                   className="space-y-6"
                 >
                   <div className="bg-zinc-950 p-8 rounded-3xl border border-zinc-800 leading-relaxed text-zinc-300">
-                    <div className="flex items-center gap-2 text-emerald-500 font-bold text-xs uppercase tracking-widest mb-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2 text-emerald-500 font-bold text-xs uppercase tracking-widest">
+                        <Sparkles size={14} />
+                        GROQ POWERED MEDICAL INSIGHTS
+                      </div>
                       {needsKey && (
                         <button 
-                          onClick={handleOpenSettings}
-                          className="mr-4 px-3 py-1.5 bg-red-500/10 text-red-500 border border-red-500/20 rounded-xl text-[10px] font-bold hover:bg-red-500/20 transition-all flex items-center gap-1.5"
+                          onClick={handleOpenKeyDialog}
+                          className="px-3 py-1.5 bg-red-500/10 text-red-500 border border-red-500/20 rounded-xl text-[10px] font-bold hover:bg-red-500/20 transition-all flex items-center gap-1.5"
                         >
-                          <Settings size={12} />
-                          Set Groq Key
+                          <AlertCircle size={12} />
+                          Fix API Key
                         </button>
                       )}
-                      <Sparkles size={14} />
-                      AI SYNTHESIZED INSIGHTS
                     </div>
                     <div className="markdown-body">
                       <ReactMarkdown>{result.text}</ReactMarkdown>
@@ -135,7 +204,7 @@ export function MedicalResearch() {
                   </div>
                   <div>
                     <p className="text-zinc-100 font-bold">Start Your Research</p>
-                    <p className="text-zinc-500 text-sm mt-1">Enter a query above to get AI-powered insights from Groq's medical knowledge base.</p>
+                    <p className="text-zinc-500 text-sm mt-1">Enter a query above to get AI-powered insights from real-time medical databases.</p>
                   </div>
                 </div>
               )}
@@ -148,11 +217,17 @@ export function MedicalResearch() {
               Verified Sources
             </h3>
             <div className="space-y-3">
+              {result && result.searchEntryPoint && (
+                <div 
+                  className="p-4 bg-zinc-950 border border-zinc-800 rounded-2xl overflow-hidden [&_a]:text-emerald-500 [&_a]:font-bold [&_a]:flex [&_a]:items-center [&_a]:gap-2 [&_a]:text-xs [&_a]:uppercase [&_a]:tracking-wider"
+                  dangerouslySetInnerHTML={{ __html: result.searchEntryPoint }}
+                />
+              )}
               {result && result.sources.length > 0 ? (
                 result.sources.map((source: any, i: number) => (
                   <a
                     key={i}
-                    href={source.web?.uri}
+                    href={source.uri}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="block p-4 bg-zinc-950 border border-zinc-800 rounded-2xl hover:border-emerald-500 hover:shadow-md transition-all group"
@@ -162,9 +237,9 @@ export function MedicalResearch() {
                       <ExternalLink size={14} className="text-zinc-700 group-hover:text-emerald-500 transition-colors" />
                     </div>
                     <p className="text-sm font-bold text-zinc-100 line-clamp-2 group-hover:text-emerald-400 transition-colors">
-                      {source.web?.title || 'Medical Resource'}
+                      {source.title || 'Medical Resource'}
                     </p>
-                    <p className="text-xs text-zinc-500 mt-2 truncate">{source.web?.uri}</p>
+                    <p className="text-xs text-zinc-500 mt-2 truncate">{source.uri}</p>
                   </a>
                 ))
               ) : (

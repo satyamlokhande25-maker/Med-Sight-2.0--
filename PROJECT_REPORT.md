@@ -6,7 +6,7 @@ MedSight 2.0 is a state-of-the-art, AI-integrated clinical management platform d
 ## 2. Project Vision & Objectives
 The primary objective of MedSight 2.0 is to reduce the administrative burden on clinicians while enhancing the accuracy and speed of medical decision-making. 
 - **Efficiency:** Automate routine tasks like appointment reminders and report generation.
-- **Intelligence:** Provide real-time AI insights grounded in the latest medical research.
+- **Intelligence:** Provide real-time AI insights grounded in the test medical research.
 - **Accessibility:** Ensure critical patient data is available anytime, anywhere, with a responsive and intuitive UI.
 
 ## 3. System Architecture

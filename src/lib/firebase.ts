@@ -1,5 +1,16 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { 
+  getAuth, 
+  GoogleAuthProvider, 
+  signInWithPopup, 
+  signOut, 
+  onAuthStateChanged, 
+  User,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile,
+  sendPasswordResetEmail
+} from 'firebase/auth';
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, query, where, orderBy, getDocFromServer, FirestoreError } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -15,7 +26,46 @@ export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
 // Auth Helpers
-export const signInWithGoogle = () => signInWithPopup(auth, googleProvider);
+export const signInWithGoogle = async () => {
+  const result = await signInWithPopup(auth, googleProvider);
+  if (result.user) {
+    // Sync user data to Firestore
+    try {
+      await setDoc(doc(db, 'users', result.user.uid), {
+        uid: result.user.uid,
+        email: result.user.email,
+        displayName: result.user.displayName,
+        photoURL: result.user.photoURL,
+        lastLogin: new Date().toISOString()
+      }, { merge: true });
+    } catch (error) {
+      console.error("Error syncing Google user to Firestore:", error);
+    }
+  }
+  return result;
+};
+export const signInWithEmail = (email: string, pass: string) => signInWithEmailAndPassword(auth, email, pass);
+export const signUpWithEmail = async (email: string, pass: string, name: string) => {
+  const userCredential = await createUserWithEmailAndPassword(auth, email, pass);
+  await updateProfile(userCredential.user, { displayName: name });
+  
+  // Save user profile to Firestore for admin management
+  try {
+    await setDoc(doc(db, 'users', userCredential.user.uid), {
+      uid: userCredential.user.uid,
+      email: email,
+      displayName: name,
+      photoURL: null,
+      createdAt: new Date().toISOString(),
+      role: 'doctor' // default role
+    });
+  } catch (error) {
+    console.error("Error creating user profile in Firestore:", error);
+  }
+  
+  return userCredential;
+};
+export const resetPassword = (email: string) => sendPasswordResetEmail(auth, email);
 export const logout = () => signOut(auth);
 
 // Firestore Error Handling Spec

@@ -8,7 +8,10 @@ import { toast } from 'sonner';
 import jsPDF from 'jspdf';
 import { Patient, Prescription } from '../types';
 
+import { AuthProvider, useAuth } from '../contexts/AuthProvider';
+
 export function PrescriptionManager() {
+  const { isSuperAdmin } = useAuth();
   const [showNewModal, setShowNewModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [newPrescription, setNewPrescription] = useState({
@@ -221,13 +224,15 @@ export function PrescriptionManager() {
                 >
                   <MessageCircle size={18} />
                 </button>
-                <button 
-                  onClick={() => handleDeletePrescription(p.id, p.patientName)}
-                  className="p-2 bg-zinc-800 text-zinc-400 hover:text-red-500 rounded-xl transition-all"
-                  title="Delete Prescription"
-                >
-                  <Trash2 size={18} />
-                </button>
+                {isSuperAdmin && (
+                  <button 
+                    onClick={() => handleDeletePrescription(p.id, p.patientName)}
+                    className="p-2 bg-zinc-800 text-zinc-400 hover:text-red-500 rounded-xl transition-all"
+                    title="Delete Prescription"
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                )}
               </div>
             </div>
             

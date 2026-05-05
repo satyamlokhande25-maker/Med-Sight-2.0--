@@ -5,6 +5,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import { getGroqResponse } from '@/services/groq';
 
+import { AuthProvider, useAuth } from '@/contexts/AuthProvider';
+
 interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -12,8 +14,9 @@ interface Message {
 }
 
 export function AIAssistant() {
+  const { user } = useAuth();
   const [messages, setMessages] = useState<Message[]>([
-    { id: '1', role: 'assistant', text: "Hello Dr. Satyam. I am Medsight AI, your clinical assistant powered by Groq. How can I help you analyze patient data or research medical information today?" }
+    { id: '1', role: 'assistant', text: `Hello Dr. ${user?.displayName || 'Doctor'}. I am Medsight AI, your clinical assistant powered by Groq. How can I help you analyze patient data or research medical information today?` }
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);

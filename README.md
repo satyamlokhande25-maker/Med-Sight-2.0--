@@ -1,191 +1,73 @@
-# 🧠 MedSight 2.0 — AI Clinical Intelligence Platform
+# MedSight 2.0 - Agentic AI Healthcare Platform
 
-![AI](https://img.shields.io/badge/AI-Multimodal-blue)
-![React](https://img.shields.io/badge/Frontend-React-61DAFB)
-![Firebase](https://img.shields.io/badge/Backend-Firebase-orange)
-![Status](https://img.shields.io/badge/Status-Active-success)
-![License](https://img.shields.io/badge/License-MIT-green)
-
-MedSight 2.0 is a **next-generation AI-powered healthcare platform** designed to bridge the gap between doctors and patients using **multimodal AI, real-time clinical tools, and intelligent medical visualization**.  
-The system combines **AI diagnostics, patient management, appointment scheduling, and medical imaging analysis** into a unified healthcare platform.
+MedSight 2.0 is a next-generation healthcare platform that bridges the gap between doctors and patients through advanced AI-driven insights, real-time consultations, and high-fidelity medical visualizations.
 
 ---
 
-# 🚀 Live Demo
+## 🚀 Key Features
 
-🌐 **Deployed App:**  
-👉 https://ais-pre-jnb4wxtkylcgnk4vv3452c-274181117707.asia-southeast1.run.app
+### 1. AI-Powered Medical Imaging & Visualization
+- **High-Definition Illustrations**: Generates 4K-quality medical diagrams, clinical illustrations, and anatomical cross-sections.
+- **4-Tier Robust Fallback**: To ensure 24/7 availability, the system automatically cycles through multiple AI models if one is busy:
+  - `gemini-2.5-flash-image` (Primary)
+  - `gemini-3.1-flash-image-preview` (Secondary)
+  - `gemini-3-pro-image-preview` (Tertiary)
+  - **Pollinations.ai** (Final Safety Net - Free, no key required)
+- **Scientific Accuracy**: Prompts are optimized for medical textbook quality and clinical precision.
 
----
+### 2. Intelligent Clinic Locator
+- **AI-Grounded Search**: Uses Gemini's grounding tools to find real-world clinics and hospitals near the user's location.
+- **3-Tier AI Fallback**: Automatically switches between `Pro`, `Flash`, and `Lite` models to bypass quota limits.
+- **Direct Maps Fallback**: If AI models are temporarily unavailable, the system provides a direct "Search on Google Maps" link as a backup.
+- **Real-Time Geolocation**: Integrated browser geolocation for precise local results.
 
-# ✨ Key Features
+### 3. Patient Education & Consultation
+- **Visual Learning**: Combines AI-generated images and videos to explain complex medical conditions to patients.
+- **Real-Time AI Assistant**: A specialized medical AI assistant for symptom analysis and general health inquiries.
+- **Document Analysis**: Upload and analyze medical reports or prescriptions using Gemini's vision capabilities.
 
-## 🧠 AI Clinical Assistant
-- Context-aware medical chatbot  
-- Differential diagnosis suggestions  
-- Drug interaction checking  
-- Medical summarization  
-- Research-grounded responses  
-
----
-
-## 🖼️ AI Medical Imaging & Visualization
-- 4K medical illustrations  
-- Anatomical diagram generation  
-- Clinical visualization tools  
-- X-ray / MRI AI analysis  
-
-### 4-Tier AI Fallback System
-- gemini-2.5-flash-image  
-- gemini-3.1-flash-image-preview  
-- gemini-3-pro-image-preview  
-- Pollinations.ai fallback  
+### 4. High Reliability & Performance
+- **Advanced Retry Logic**: Implements `fetchWithRetry` with exponential backoff and timeout support for all network operations.
+- **Quota Management**: Intelligent handling of `429 RESOURCE_EXHAUSTED` errors with user-friendly retry options.
+- **Optimized Server-Side Proxies**: Centralized AI logic on the server for better security and model management.
 
 ---
 
-## 📍 Intelligent Clinic Locator
-- AI-grounded search  
-- Real-time geolocation  
-- Google Maps integration  
-- Multi-model fallback  
+## 🛠️ Tech Stack
+
+| Category | Technologies |
+| :--- | :--- |
+| **Frontend** | React 18, Tailwind CSS, Framer Motion, Lucide React |
+| **Backend** | Node.js, Express |
+| **AI Integration** | Google Gemini API, Pollinations.ai |
+| **State Management** | React Hooks, Context API |
 
 ---
 
-## 👨‍⚕️ Patient Management
-- Electronic Health Records  
-- Patient status tracking  
-- Medical history  
-- Vitals monitoring  
+## 📦 Installation & Setup
 
----
-
-## 📅 Appointment & Reminder System
-- Smart scheduling  
-- Email reminders  
-- Calendar interface  
-- Conflict detection  
-
----
-
-## 📊 Dynamic Dashboard
-- Real-time patient stats  
-- Activity feed  
-- Quick actions  
-- Critical case alerts  
-
----
-
-## 📚 Patient Education System
-- AI generated videos  
-- Medical diagrams  
-- Multilingual support  
-- Condition explanation  
-
----
-
-## 🎥 Live Consultation
-- Real-time interaction  
-- AI assisted consultation  
-- Remote healthcare support  
-
----
-
-# 🏗️ System Architecture
-User Interface (React)
-↓
-Backend (Node + Express)
-↓
-AI Engine (Gemini + RAG)
-↓
-Database (Firebase Firestore)
-
-
----
-
-# 🛠️ Tech Stack
-
-### Frontend
-- React  
-- TypeScript  
-- Tailwind CSS  
-- Framer Motion  
-
-### Backend
-- Node.js  
-- Express.js  
-
-### AI Integration
-- Google Gemini API  
-- Pollinations AI  
-- RAG Pipeline  
-
-### Database
-- Firebase Firestore  
-
-### Authentication
-- Firebase Auth  
-
----
-
-# 📂 Project Structure
-MedSight-2.0
-│
-├── src
-│ ├── components
-│ ├── services
-│ ├── contexts
-│ ├── lib
-│
-├── server.ts
-├── firestore.rules
-├── package.json
-└── README.md
-
-
----
-
-# 📦 Installation
-
-## Clone Repository
+### 1. Install Dependencies
 ```bash
-git clone https://github.com/yourusername/MedSight-2.0.git
+npm install
+```
 
-📦 Installation
-1. Clone Repository
-git clone https://github.com/yourusername/MedSight-2.0.git
-
-2. Install Dependencies
-  npm install
-3. Environment Variables
-
-## Create .env
+### 2. Environment Variables
+Create a `.env` file and add your Gemini API Key:
+```env
 GEMINI_API_KEY=your_api_key_here
+```
 
-4. Run Project
+### 3. Run Development Server
+```bash
 npm run dev
+```
 
-## Build Production
+### 4. Build for Production
+```bash
 npm run build
+```
 
-🔐 Security Features
-Firebase Authentication
-Role-based access
-Secure API proxy
-AI response validation
-Encrypted patient data
+---
 
-🚀 Future Scope
-Telemedicine integration
-Wearable device sync
-Predictive analytics
-Mobile app
-Hospital integration
-
-🛡️ Disclaimer
-
-MedSight 2.0 is an AI-powered educational and clinical support tool.
-It is not a substitute for professional medical advice, diagnosis, or treatment.
-
-👨‍💻 Author
-
-MedSight 2.0
+## 🛡️ Disclaimer
+MedSight 2.0 is an AI-powered educational and visualization tool. It is **not** a substitute for professional medical advice, diagnosis, or treatment. Always consult with a qualified healthcare provider for any medical concerns.

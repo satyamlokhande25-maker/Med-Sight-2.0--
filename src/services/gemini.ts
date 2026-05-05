@@ -1,12 +1,12 @@
 import { fetchWithRetry } from "../lib/fetchWithRetry";
 
-export const geminiModel = "gemini-3-flash-preview";
+export const geminiModel = "gemini-3-flash-latest";
 export const proModel = "gemini-3.1-pro-preview";
 export const liteModel = "gemini-3.1-flash-lite-preview";
-export const imageModel = "gemini-2.5-flash-image"; 
-export const videoModel = "veo-3.1-fast-generate-preview";
-export const liveModel = "gemini-2.5-flash-native-audio-preview-12-2025";
-export const ttsModel = "gemini-2.5-flash-preview-tts";
+export const imageModel = "gemini-3-flash-preview"; // Fallback for image analysis if needed
+export const videoModel = "veo-3.1-lite-generate-preview";
+export const liveModel = "gemini-3.1-flash-live-preview";
+export const ttsModel = "gemini-3.1-flash-tts-preview";
 
 export const getApiKey = (requirePaid: boolean = false) => {
   // This is now mostly for compatibility as we use proxies
@@ -17,21 +17,37 @@ export const getApiKey = (requirePaid: boolean = false) => {
   return process.env.API_KEY || process.env.MY_API_KEY || process.env.GEMINI_API_KEY;
 };
 
-export const getGeminiResponse = async (prompt: string, model: string = geminiModel) => {
+export const getGeminiResponse = async (prompt: string, model: string = geminiModel, config: any = {}, tools?: any[], toolConfig?: any) => {
   try {
     const response = await fetchWithRetry("/api/gemini/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, model }),
+      body: JSON.stringify({ prompt, model, config, tools, toolConfig }),
     });
 
     const data = await response.json();
     if (!response.ok) {
       throw new Error(data.error || "GEMINI_API_ERROR");
     }
+    
+    // Return both content and grounding metadata if available
+    if (data.groundingMetadata) {
+      return {
+        text: data.content,
+        groundingMetadata: data.groundingMetadata
+      };
+    }
+    
     return data.content;
   } catch (error: any) {
-    console.error("Gemini Proxy Error (getGeminiResponse):", error);
+    const errorMsg = error.message?.toLowerCase() || "";
+    const isQuotaError = errorMsg.includes("quota") || errorMsg.includes("429") || errorMsg.includes("resource_exhausted");
+    
+    if (isQuotaError) {
+      console.warn("Gemini Quota Exceeded (getGeminiResponse).");
+    } else {
+      console.error("Gemini Proxy Error (getGeminiResponse):", error);
+    }
     throw error;
   }
 };
@@ -130,7 +146,7 @@ export const generateVideo = async (prompt: string, aspectRatio: string = "16:9"
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prompt, aspectRatio }),
-    });
+    }, 1, 1000, true, 300000); // 5 minute timeout for video generation
 
     const data = await response.json();
     if (!response.ok) {

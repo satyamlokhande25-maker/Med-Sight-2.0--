@@ -27,10 +27,33 @@ export function PatientEducation() {
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedVisual, setGeneratedVisual] = useState<string | null>(null);
+  const [isFallback, setIsFallback] = useState(false);
   const [visualType, setVisualType] = useState<'image' | 'video'>('image');
   const [status, setStatus] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [needsKey, setNeedsKey] = useState(false);
+  const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
+
+  const loadingMessages = [
+    "Analyzing medical request...",
+    "Synthesizing anatomical data...",
+    "Rendering high-definition visual...",
+    "Applying clinical accuracy filters...",
+    "Finalizing educational content...",
+    "Almost ready, medical visuals take time to perfect..."
+  ];
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isGenerating) {
+      interval = setInterval(() => {
+        setLoadingMessageIndex((prev) => (prev + 1) % loadingMessages.length);
+      }, 5000);
+    } else {
+      setLoadingMessageIndex(0);
+    }
+    return () => clearInterval(interval);
+  }, [isGenerating]);
 
   const handleGenerate = async () => {
     if (!prompt.trim() || isGenerating) return;
@@ -45,6 +68,7 @@ export function PatientEducation() {
 
     setIsGenerating(true);
     setGeneratedVisual(null);
+    setIsFallback(false);
     setError(null);
     setNeedsKey(false);
     setStatus(`Generating educational ${visualType}...`);
@@ -54,8 +78,10 @@ export function PatientEducation() {
       if (visualType === 'image') {
         const imageResult = await generateImage(prompt, '16:9');
         result = imageResult.url;
+        setIsFallback(imageResult.isFallback);
       } else {
         result = await generateVideo(prompt, '16:9');
+        setIsFallback(false);
       }
       setGeneratedVisual(result);
       setStatus('');
@@ -197,6 +223,21 @@ export function PatientEducation() {
                       referrerPolicy="no-referrer"
                     />
                   )}
+                  {isFallback && (
+                    <div className="absolute bottom-6 left-6 right-6 bg-amber-500/90 backdrop-blur p-3 rounded-xl flex items-center justify-between gap-3 text-white shadow-lg">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle size={16} />
+                        <p className="text-[10px] font-bold uppercase tracking-wider">Shared Quota Exceeded • Fallback Mode</p>
+                      </div>
+                      <button 
+                        onClick={handleOpenKeyDialog}
+                        className="px-3 py-1 bg-white text-amber-600 rounded-lg text-[10px] font-bold hover:bg-zinc-100 transition-all flex items-center gap-1"
+                      >
+                        <Key size={10} />
+                        Use Personal Key
+                      </button>
+                    </div>
+                  )}
                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
                     <a 
                       href={generatedVisual || ''} 
@@ -231,7 +272,7 @@ export function PatientEducation() {
                   <div className="space-y-4">
                     <div className="w-16 h-16 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto" />
                     <div>
-                      <p className="text-zinc-100 font-bold">{status}</p>
+                      <p className="text-zinc-100 font-bold">{loadingMessages[loadingMessageIndex]}</p>
                       <p className="text-zinc-500 text-sm mt-1">Creating a detailed visual explanation for your patient.</p>
                     </div>
                   </div>

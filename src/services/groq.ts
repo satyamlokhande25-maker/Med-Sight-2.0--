@@ -29,7 +29,12 @@ export const getGroqResponse = async (messages: { role: 'user' | 'assistant' | '
       const systemMessage = messages.find(m => m.role === 'system')?.content || "";
       const fullPrompt = systemMessage ? `${systemMessage}\n\nUser: ${lastUserMessage}` : lastUserMessage;
       
-      return await getGeminiResponse(fullPrompt);
+      const result = await getGeminiResponse(fullPrompt);
+      // If result is an object (with grounding metadata), return just the text for compatibility
+      if (typeof result === 'object' && result.text) {
+        return result.text;
+      }
+      return result;
     } catch (fallbackError) {
       console.error("Gemini fallback also failed:", fallbackError);
       throw error; // Throw original error if fallback also fails

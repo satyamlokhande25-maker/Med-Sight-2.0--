@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import Calendar from 'react-calendar';
 import 'react-calendar/dist/Calendar.css';
 import { useCollection } from 'react-firebase-hooks/firestore';
-import { collection, query, where, orderBy, addDoc } from 'firebase/firestore';
+import { collection, query, where, orderBy, addDoc, deleteDoc, doc } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
-import { Clock, User, Plus, Calendar as CalendarIcon, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { Clock, User, Plus, Calendar as CalendarIcon, ChevronLeft, ChevronRight, X, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, isSameDay, parseISO } from 'date-fns';
 import { toast } from 'sonner';
@@ -12,6 +12,8 @@ import { toast } from 'sonner';
 export function AppointmentCalendar() {
   const [date, setDate] = useState(new Date());
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [selectedAppointment, setSelectedAppointment] = useState<any>(null);
   const [newAppointment, setNewAppointment] = useState({
     patientName: '',
     time: '10:00 AM',
@@ -46,6 +48,15 @@ export function AppointmentCalendar() {
       setNewAppointment({ patientName: '', time: '10:00 AM', type: 'Consultation', status: 'Scheduled' });
     } catch (error) {
       toast.error('Failed to schedule appointment');
+    }
+  };
+
+  const handleDeleteAppointment = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'appointments', id));
+      toast.success('Appointment deleted');
+    } catch (error) {
+      toast.error('Failed to delete appointment');
     }
   };
 
@@ -128,9 +139,24 @@ export function AppointmentCalendar() {
                       </div>
                     </div>
                   </div>
-                  <button className="p-3 bg-zinc-800 text-zinc-400 hover:text-emerald-500 rounded-xl transition-all opacity-0 group-hover:opacity-100">
-                    Details
-                  </button>
+                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                    <button 
+                      onClick={() => {
+                        setSelectedAppointment(app);
+                        setShowDetailsModal(true);
+                      }}
+                      className="p-3 bg-zinc-800 text-zinc-400 hover:text-emerald-500 rounded-xl transition-all"
+                    >
+                      Details
+                    </button>
+                    <button 
+                      onClick={() => handleDeleteAppointment(app.id)}
+                      className="p-3 bg-zinc-800 text-zinc-400 hover:text-red-500 rounded-xl transition-all"
+                      title="Delete Appointment"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
                 </motion.div>
               ))
             ) : (
@@ -224,6 +250,78 @@ export function AppointmentCalendar() {
                     className="flex-1 py-4 bg-emerald-500 text-white rounded-2xl font-bold hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-500/20"
                   >
                     Schedule
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {showDetailsModal && selectedAppointment && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowDetailsModal(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-8 shadow-2xl"
+            >
+              <div className="flex items-center justify-between mb-8">
+                <h2 className="text-2xl font-bold text-zinc-100">Appointment Details</h2>
+                <button onClick={() => setShowDetailsModal(false)} className="text-zinc-500 hover:text-zinc-300">
+                  <X size={24} />
+                </button>
+              </div>
+              
+              <div className="space-y-6">
+                <div className="flex items-center gap-4">
+                  <div className="w-16 h-16 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-500">
+                    <User size={32} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold text-zinc-100">{selectedAppointment.patientName}</h3>
+                    <p className="text-zinc-400">{selectedAppointment.type}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-zinc-800/50 p-4 rounded-2xl border border-zinc-800">
+                    <p className="text-xs font-bold text-zinc-500 uppercase mb-1">Time</p>
+                    <p className="text-zinc-100 font-bold flex items-center gap-2">
+                      <Clock size={14} className="text-emerald-500" />
+                      {selectedAppointment.time}
+                    </p>
+                  </div>
+                  <div className="bg-zinc-800/50 p-4 rounded-2xl border border-zinc-800">
+                    <p className="text-xs font-bold text-zinc-500 uppercase mb-1">Status</p>
+                    <p className={`text-xs px-2 py-1 rounded-full font-bold inline-block ${
+                      selectedAppointment.status === 'Completed' ? 'bg-emerald-500/20 text-emerald-500' : 'bg-blue-500/20 text-blue-500'
+                    }`}>
+                      {selectedAppointment.status}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-zinc-800/50 p-4 rounded-2xl border border-zinc-800">
+                  <p className="text-xs font-bold text-zinc-500 uppercase mb-1">Date</p>
+                  <p className="text-zinc-100 font-bold flex items-center gap-2">
+                    <CalendarIcon size={14} className="text-emerald-500" />
+                    {format(parseISO(selectedAppointment.date), 'MMMM d, yyyy')}
+                  </p>
+                </div>
+
+                <div className="pt-4">
+                  <button 
+                    onClick={() => setShowDetailsModal(false)}
+                    className="w-full py-4 bg-zinc-800 text-zinc-300 rounded-2xl font-bold hover:bg-zinc-700 transition-all"
+                  >
+                    Close
                   </button>
                 </div>
               </div>

@@ -23,7 +23,7 @@ process.on('uncaughtException', (err) => {
 const groqModel = "llama-3.3-70b-versatile";
 const groqVisionModel = "llama-3.2-90b-vision-preview";
 const geminiModel = "gemini-3-flash-preview";
-const videoModel = "veo-3.1-fast-generate-preview";
+const videoModel = "veo-3.1-lite-generate-preview";
 
 async function startServer() {
   const app = express();
@@ -52,7 +52,7 @@ async function startServer() {
 
   app.post("/api/gemini/chat", async (req, res) => {
     try {
-      const { prompt, model = geminiModel } = req.body;
+      const { prompt, model = geminiModel, config = {}, tools, toolConfig } = req.body;
       const apiKey = process.env.API_KEY || process.env.MY_API_KEY || process.env.GEMINI_API_KEY;
       if (!apiKey) {
         return res.status(401).json({ error: "GEMINI_API_KEY_MISSING" });
@@ -60,20 +60,74 @@ async function startServer() {
 
       const { GoogleGenAI } = await import("@google/genai");
       const ai = new GoogleGenAI({ apiKey });
-      const response = await ai.models.generateContent({
-        model: model,
-        contents: prompt,
-      });
-      res.json({ content: response.text || "No response generated." });
+      
+      const models = [
+        "gemini-2.0-flash",
+        model,
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+        "gemini-flash-latest"
+      ].filter((m, i, self) => self.indexOf(m) === i); // Unique models
+
+      let lastError = null;
+      for (const currentModel of models) {
+        try {
+          console.log(`Attempting Gemini chat with model: ${currentModel}...`);
+          
+          const response = await ai.models.generateContent({
+            model: currentModel,
+            contents: prompt,
+            config: {
+              ...config,
+              tools: tools || config.tools || (config.googleSearch ? [{ googleSearch: {} }] : undefined),
+            },
+            toolConfig: toolConfig || config.toolConfig,
+          } as any);
+          
+          const groundingMetadata = response.candidates?.[0]?.groundingMetadata;
+          if (groundingMetadata) {
+            console.log(`Grounding metadata found for ${currentModel}`);
+          }
+
+          return res.json({ 
+            content: response.text || "No response generated.",
+            groundingMetadata: groundingMetadata
+          });
+        } catch (err: any) {
+          lastError = err;
+          const errorMsg = err.message?.toLowerCase() || "";
+          const isQuotaError = errorMsg.includes("quota") || 
+                             err.status === "RESOURCE_EXHAUSTED" ||
+                             err.status === 429 ||
+                             err.message?.includes("429");
+          
+          if (isQuotaError) {
+            console.warn(`Model ${currentModel} quota exceeded. Trying next model...`);
+            continue;
+          }
+          console.error(`Model ${currentModel} failed:`, err.message);
+          continue;
+        }
+      }
+
+      throw lastError || new Error("All Gemini models failed.");
     } catch (error: any) {
       console.error("Gemini Chat Proxy Error:", error);
+      const isQuotaError = error.message?.toLowerCase().includes("quota") || 
+                         error.status === "RESOURCE_EXHAUSTED" ||
+                         error.message?.includes("429") ||
+                         error.status === 429;
+      
+      if (isQuotaError) {
+        return res.status(429).json({ error: "QUOTA_EXCEEDED", message: error.message });
+      }
       res.status(500).json({ error: error.message });
     }
   });
 
   app.post("/api/gemini/vision", async (req, res) => {
     try {
-      const { prompt, fileData, model = groqVisionModel } = req.body;
+      const { prompt, fileData, model = "gemini-1.5-pro" } = req.body;
       const apiKey = process.env.API_KEY || process.env.MY_API_KEY || process.env.GEMINI_API_KEY;
       if (!apiKey) {
         return res.status(401).json({ error: "GEMINI_API_KEY_MISSING" });
@@ -81,28 +135,66 @@ async function startServer() {
 
       const { GoogleGenAI } = await import("@google/genai");
       const ai = new GoogleGenAI({ apiKey });
-      const parts: any[] = [{ text: prompt }];
       
-      if (fileData) {
-        parts.push({
-          inlineData: {
-            data: fileData.data,
-            mimeType: fileData.mimeType
+      const models = [
+        model,
+        "gemini-1.5-pro",
+        "gemini-1.5-flash",
+        "gemini-2.0-flash"
+      ].filter((m, i, self) => self.indexOf(m) === i);
+
+      let lastError = null;
+      for (const currentModel of models) {
+        try {
+          console.log(`Attempting Gemini vision with model: ${currentModel}...`);
+          const parts: any[] = [{ text: prompt }];
+          
+          if (fileData) {
+            parts.push({
+              inlineData: {
+                data: fileData.data,
+                mimeType: fileData.mimeType
+              }
+            });
           }
-        });
+
+          const response = await ai.models.generateContent({
+            model: currentModel === groqVisionModel ? "gemini-1.5-pro" : currentModel,
+            contents: { parts },
+            config: {
+              systemInstruction: "You are a senior radiologist and clinical pathologist. Analyze the provided medical document (X-ray, MRI, or lab report) with high precision. Identify key findings, potential abnormalities, and provide a structured clinical interpretation. Always include a disclaimer that this is an AI-assisted analysis and must be verified by a human specialist.",
+            }
+          });
+          
+          return res.json({ content: response.text || "No analysis generated." });
+        } catch (err: any) {
+          lastError = err;
+          const isQuotaError = err.message?.toLowerCase().includes("quota") || 
+                             err.status === "RESOURCE_EXHAUSTED" ||
+                             err.message?.includes("429") ||
+                             err.status === 429;
+          
+          if (isQuotaError) {
+            console.warn(`Model ${currentModel} vision quota exceeded. Waiting 1s before next model...`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            continue;
+          }
+          console.error(`Model ${currentModel} vision failed:`, err.message);
+          continue;
+        }
       }
 
-      const response = await ai.models.generateContent({
-        model: model === groqVisionModel ? "gemini-3.1-pro-preview" : model,
-        contents: { parts },
-        config: {
-          systemInstruction: "You are a senior radiologist and clinical pathologist. Analyze the provided medical document (X-ray, MRI, or lab report) with high precision. Identify key findings, potential abnormalities, and provide a structured clinical interpretation. Always include a disclaimer that this is an AI-assisted analysis and must be verified by a human specialist.",
-        }
-      });
-      
-      res.json({ content: response.text || "No analysis generated." });
+      throw lastError || new Error("All Gemini vision models failed.");
     } catch (error: any) {
       console.error("Gemini Vision Proxy Error:", error);
+      const isQuotaError = error.message?.toLowerCase().includes("quota") || 
+                         error.status === "RESOURCE_EXHAUSTED" ||
+                         error.message?.includes("429") ||
+                         error.status === 429;
+      
+      if (isQuotaError) {
+        return res.status(429).json({ error: "QUOTA_EXCEEDED", message: error.message });
+      }
       res.status(500).json({ error: error.message });
     }
   });
@@ -118,80 +210,144 @@ async function startServer() {
       const { GoogleGenAI } = await import("@google/genai");
       const ai = new GoogleGenAI({ apiKey });
       
-      const imagePrompt = `Professional medical illustration, high-definition clinical style, scientific accuracy, clear anatomical labels, 4k resolution, medical textbook quality: ${prompt}`;
+      const imagePrompt = `Professional medical illustration for patient education, high-definition clinical style, scientific accuracy, clear anatomical labels, 4k resolution, medical textbook quality, white background, realistic lighting: ${prompt}`;
       
       let response;
-      try {
-        // Model 1: 2.5 Flash Image
-        response = await ai.models.generateContent({
-          model: "gemini-2.5-flash-image",
-          contents: { parts: [{ text: imagePrompt }] },
-          config: {
-            imageConfig: { aspectRatio: aspectRatio as any, imageSize: "1K" },
-          },
-        });
-      } catch (error1: any) {
-        console.warn("Gemini 2.5 Flash Image failed, falling back to 3.1 Flash Image...", error1.message);
-        await new Promise(resolve => setTimeout(resolve, 1000));
+      let lastError = null;
+
+      // 1. Try Imagen models (Paid only)
+      const imagenModels = ['imagen-4.0-generate-001', 'imagen-3.0-generate-001'];
+      for (const model of imagenModels) {
         try {
-          // Model 2: 3.1 Flash Image
-          response = await ai.models.generateContent({
-            model: "gemini-3.1-flash-image-preview",
-            contents: { parts: [{ text: imagePrompt }] },
+          console.log(`Attempting image generation with Imagen model: ${model}...`);
+          const imagenResponse = await ai.models.generateImages({
+            model: model,
+            prompt: imagePrompt,
             config: {
-              imageConfig: { aspectRatio: aspectRatio as any, imageSize: "1K" },
+              numberOfImages: 1,
+              outputMimeType: 'image/png',
+              aspectRatio: aspectRatio as any,
             },
           });
-        } catch (error2: any) {
-          console.warn("Gemini 3.1 Flash Image failed, falling back to 3 Pro Image...", error2.message);
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          try {
-            // Model 3: 3 Pro Image
-            response = await ai.models.generateContent({
-              model: "gemini-3-pro-image-preview",
-              contents: { parts: [{ text: imagePrompt }] },
-              config: {
-                imageConfig: { aspectRatio: aspectRatio as any, imageSize: "1K" },
-              },
-            });
-          } catch (error3: any) {
-            console.warn("All Gemini image models failed, attempting Pollinations.ai fallback...", error3.message);
-            try {
-              const seed = Math.floor(Math.random() * 1000000);
-              const encodedPrompt = encodeURIComponent(`Professional medical illustration, clinical style, high scientific accuracy, clear labels: ${prompt}`);
-              const pollinationUrl = `https://pollinations.ai/p/${encodedPrompt}?width=1024&height=1024&seed=${seed}&model=flux&nologo=true`;
-              
-              // We return this as a valid URL
-              return res.json({ url: pollinationUrl, isFallback: true });
-            } catch (pollinationError: any) {
-              console.error("Pollinations.ai fallback failed:", pollinationError.message);
-              if (error3.message?.includes("429") || error3.message?.includes("quota")) {
-                return res.status(429).json({ error: "QUOTA_EXCEEDED" });
-              }
-              throw error3;
-            }
+          const base64Data = imagenResponse.generatedImages[0].image.imageBytes;
+          if (base64Data) {
+            console.log(`Successfully generated image with Imagen model: ${model}`);
+            return res.json({ url: `data:image/png;base64,${base64Data}` });
+          }
+        } catch (err: any) {
+          lastError = err;
+          const isPaidError = err.message?.includes("paid plans") || 
+                             err.status === "INVALID_ARGUMENT" || 
+                             err.status === "PERMISSION_DENIED" ||
+                             err.message?.includes("403");
+          
+          if (isPaidError) {
+            console.log(`Imagen model ${model} skipped: Paid plan required or access denied.`);
+          } else {
+            console.warn(`Imagen model ${model} failed:`, err.message);
           }
         }
       }
 
-      let imageUrl = null;
-      for (const part of response.candidates?.[0]?.content?.parts || []) {
-        if (part.inlineData) {
-          imageUrl = `data:image/png;base64,${part.inlineData.data}`;
-          break;
+      // 2. Try Gemini Image Models in sequence
+      const models = [
+        "gemini-3-flash-preview",
+        "gemini-3.1-pro-preview",
+        "gemini-flash-latest"
+      ];
+
+      for (const model of models) {
+        try {
+          console.log(`Attempting image generation with model: ${model}...`);
+          
+          const genConfig: any = {
+            imageConfig: { 
+              aspectRatio: aspectRatio as any
+            },
+            // googleSearch is the correct tool name for grounding
+            tools: [{
+              googleSearch: {}
+            }]
+          };
+          
+          let retryCount = 0;
+          const maxRetries = 2;
+          
+          while (retryCount <= maxRetries) {
+            try {
+              response = await ai.models.generateContent({
+                model: model,
+                contents: { parts: [{ text: imagePrompt }] },
+                config: genConfig,
+              });
+              break; // Success
+            } catch (err: any) {
+              const isQuotaError = err.message?.toLowerCase().includes("quota") || 
+                                 err.status === "RESOURCE_EXHAUSTED" ||
+                                 err.message?.includes("429") ||
+                                 err.status === 429;
+              
+              if (isQuotaError && retryCount < maxRetries) {
+                retryCount++;
+                console.log(`Quota hit for ${model}, retrying in 2s... (Attempt ${retryCount})`);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                continue;
+              }
+              throw err;
+            }
+          }
+          
+          const parts = response.candidates?.[0]?.content?.parts || [];
+          let imageData = null;
+          for (const part of parts) {
+            if (part.inlineData?.data) {
+              imageData = part.inlineData.data;
+              break;
+            }
+          }
+
+          if (imageData) {
+            console.log(`Successfully generated image with model: ${model}`);
+            return res.json({ url: `data:image/png;base64,${imageData}` });
+          } else {
+            console.warn(`Model ${model} returned no image data.`);
+          }
+        } catch (err: any) {
+          lastError = err;
+          const isQuotaError = err.message?.toLowerCase().includes("quota") || 
+                             err.status === "RESOURCE_EXHAUSTED" ||
+                             err.message?.includes("429") ||
+                             err.status === 429;
+          
+          if (isQuotaError) {
+            console.warn(`Model ${model} quota exceeded (429). Waiting 1s before next attempt...`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          } else {
+            console.warn(`Model ${model} failed:`, err.message || err);
+          }
+          // Continue to next model
         }
       }
 
-      if (!imageUrl) {
-        throw new Error("No image data returned from Gemini.");
+      // 3. Final Fallback: Pollinations.ai
+      console.log("All Gemini image models failed or hit quota. Falling back to Pollinations.ai...");
+      try {
+        const seed = Math.floor(Math.random() * 1000000);
+        const encodedPrompt = encodeURIComponent(`Professional medical illustration, clinical style, high scientific accuracy, clear labels: ${prompt}`);
+        // Using Flux model on Pollinations for high quality
+        const pollinationUrl = `https://pollinations.ai/p/${encodedPrompt}?width=1024&height=1024&seed=${seed}&model=flux&nologo=true`;
+        
+        return res.json({ url: pollinationUrl, isFallback: true });
+      } catch (pollinationError: any) {
+        console.error("Pollinations.ai fallback failed:", pollinationError.message);
+        // If even fallback fails, return the last Gemini error
+        if (lastError?.message?.includes("quota") || lastError?.status === "RESOURCE_EXHAUSTED") {
+          return res.status(429).json({ error: "QUOTA_EXCEEDED" });
+        }
+        throw lastError || pollinationError;
       }
-
-      res.json({ url: imageUrl });
     } catch (error: any) {
       console.error("Gemini Image Proxy Error:", error);
-      if (error.message?.includes("429") || error.message?.includes("quota")) {
-        return res.status(429).json({ error: "QUOTA_EXCEEDED" });
-      }
       res.status(500).json({ error: error.message });
     }
   });
@@ -232,6 +388,14 @@ async function startServer() {
       res.json({ url: downloadLink, apiKey: apiKey }); // Return link and key for client-side fetch
     } catch (error: any) {
       console.error("Gemini Video Proxy Error:", error);
+      const isQuotaError = error.message?.toLowerCase().includes("quota") || 
+                         error.status === "RESOURCE_EXHAUSTED" ||
+                         error.message?.includes("429") ||
+                         error.status === 429;
+      
+      if (isQuotaError) {
+        return res.status(429).json({ error: "QUOTA_EXCEEDED", message: error.message });
+      }
       res.status(500).json({ error: error.message });
     }
   });
@@ -269,7 +433,7 @@ async function startServer() {
                 }
               }
             } : undefined
-          },
+          }
         });
       } catch (proError: any) {
         console.warn("Gemini Pro Maps search failed, falling back to Flash...", proError.message);
@@ -313,7 +477,7 @@ async function startServer() {
                     }
                   }
                 } : undefined
-              },
+              }
             });
           } catch (liteError: any) {
             console.error("All Gemini models failed for Maps search:", liteError);
@@ -326,9 +490,43 @@ async function startServer() {
       }
       
       console.log("Maps search successful, returning results.");
+      
+      const groundings = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+      const sources = groundings.map((g: any) => {
+        // Normalize maps/place chunks for the frontend ClinicLocator
+        if (g.place) {
+          return { 
+            maps: { 
+              title: g.place.placeName, 
+              address: g.place.address, 
+              uri: g.place.uri 
+            } 
+          };
+        }
+        if (g.maps) {
+          return {
+            maps: {
+              title: g.maps.title,
+              address: g.maps.address,
+              uri: g.maps.uri
+            }
+          };
+        }
+        if (g.web) {
+          return {
+            maps: {
+              title: g.web.title,
+              address: g.web.uri, // fallback
+              uri: g.web.uri
+            }
+          };
+        }
+        return g;
+      });
+
       res.json({ 
         content: response.text || "No response generated.",
-        sources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || []
+        sources: sources
       });
     } catch (error: any) {
       console.error("Gemini Maps Proxy Error:", error);
@@ -350,8 +548,10 @@ async function startServer() {
     try {
       const { messages } = req.body;
       const apiKey = process.env.GROQ_API_KEY || process.env.GROQ_KEY;
+      
       if (!apiKey) {
-        return res.status(401).json({ error: "GROQ_API_KEY_MISSING" });
+        console.warn("GROQ_API_KEY missing, falling back to Gemini for chat...");
+        throw new Error("GROQ_API_KEY_MISSING");
       }
 
       const groq = new Groq({ apiKey });
@@ -364,8 +564,45 @@ async function startServer() {
 
       res.json({ content: completion.choices[0]?.message?.content || "No response." });
     } catch (error: any) {
-      console.error("Groq Chat Proxy Error:", error);
-      res.status(500).json({ error: error.message });
+      console.error("Groq Chat Proxy Error (Attempting Gemini fallback):", error.message);
+      
+      try {
+        const { messages } = req.body;
+        const geminiKey = process.env.API_KEY || process.env.MY_API_KEY || process.env.GEMINI_API_KEY;
+        
+        if (!geminiKey) {
+          return res.status(401).json({ error: "ALL_API_KEYS_MISSING" });
+        }
+
+        const { GoogleGenAI } = await import("@google/genai");
+        const ai = new GoogleGenAI({ apiKey: geminiKey });
+        
+        // Convert Groq messages to Gemini format (more robustly)
+        const systemMessage = messages.find((m: any) => m.role === 'system')?.content;
+        const geminiMessages = messages
+          .filter((m: any) => m.role !== 'system')
+          .map((m: any) => ({
+            role: m.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: m.content }]
+          }));
+
+        if (geminiMessages.length === 0) {
+          throw new Error("No user or assistant messages found to send to Gemini.");
+        }
+
+        const response = await ai.models.generateContent({
+          model: "gemini-2.0-flash",
+          contents: geminiMessages,
+          config: {
+            systemInstruction: systemMessage,
+          }
+        });
+
+        res.json({ content: response.text || "No response generated." });
+      } catch (fallbackError: any) {
+        console.error("Groq Gemini Fallback Error:", fallbackError);
+        res.status(500).json({ error: fallbackError.message });
+      }
     }
   });
 
@@ -373,8 +610,32 @@ async function startServer() {
     try {
       const { question, context, history } = req.body;
       const apiKey = process.env.GROQ_API_KEY || process.env.GROQ_KEY;
+      
+      const template = `
+        You are a highly skilled medical assistant and clinical analyst. Your goal is to provide precise, evidence-based answers based ONLY on the provided medical context.
+
+        CRITICAL INSTRUCTIONS:
+        1. GROUNDING: Your answer must be strictly grounded in the provided "Context". Use specific values, dates, and findings from the documents.
+        2. NO HALLUCINATION: If the information required to answer the question is not present in the context, explicitly state: "Based on the provided documents, I cannot find information regarding [topic]."
+        3. CLINICAL PRECISION: Use professional medical terminology. Highlight critical values (e.g., extremely high/low lab results) and explain their significance in simple terms for the patient if needed.
+        4. STRUCTURE: Use clear headings, bullet points, and bold text for key findings.
+        5. GROUND LEVEL INSIGHTS: Provide practical, actionable insights based on the report. Don't just list values; explain what they mean for the patient's health.
+        6. UP-TO-DATE: If the question requires general medical knowledge beyond the specific patient data, you may provide it but clearly distinguish it from the patient-specific findings.
+
+        Context:
+        {context}
+
+        Conversation History:
+        {history}
+
+        Question: {question}
+
+        Answer:
+      `;
+
       if (!apiKey) {
-        return res.status(401).json({ error: "GROQ_API_KEY_MISSING" });
+        console.warn("GROQ_API_KEY missing, falling back to Gemini for RAG...");
+        throw new Error("GROQ_API_KEY_MISSING");
       }
 
       const { ChatGroq } = await import("@langchain/groq");
@@ -387,22 +648,6 @@ async function startServer() {
         model: groqModel,
         temperature: 0.1,
       });
-
-      const template = `
-        You are a highly skilled medical assistant. Use the following extracted medical information and conversation history to answer the doctor's question.
-        If the information is not in the context, say you don't know based on the provided documents.
-        Be precise, professional, and highlight any critical findings.
-
-        Context:
-        {context}
-
-        Conversation History:
-        {history}
-
-        Question: {question}
-
-        Answer:
-      `;
 
       const prompt = PromptTemplate.fromTemplate(template);
       const outputParser = new StringOutputParser();
@@ -421,8 +666,54 @@ async function startServer() {
 
       res.json({ content: response });
     } catch (error: any) {
-      console.error("RAG Chat Error:", error);
-      res.status(500).json({ error: error.message });
+      console.error("RAG Chat Error (Attempting Gemini fallback):", error.message);
+      
+      try {
+        const { question, context, history } = req.body;
+        const geminiKey = process.env.API_KEY || process.env.MY_API_KEY || process.env.GEMINI_API_KEY;
+        
+        if (!geminiKey) {
+          return res.status(401).json({ error: "ALL_API_KEYS_MISSING" });
+        }
+
+        const { GoogleGenAI } = await import("@google/genai");
+        const ai = new GoogleGenAI({ apiKey: geminiKey });
+        
+        const systemInstruction = `
+          You are a highly skilled medical assistant and clinical analyst. Your goal is to provide precise, evidence-based answers based ONLY on the provided medical context.
+          
+          CRITICAL INSTRUCTIONS:
+          1. GROUNDING: Your answer must be strictly grounded in the provided "Context". Use specific values and findings.
+          2. NO HALLUCINATION: If the information required to answer the question is not present in the context, explicitly state: "Based on the provided documents, I cannot find information regarding [topic]."
+          3. CLINICAL PRECISION: Use professional medical terminology. Highlight critical values and explain their significance.
+          4. GROUND LEVEL INSIGHTS: Provide practical, actionable insights based on the report.
+          5. SEARCH: If the user asks for general medical information or "up-to-date" research, use the Google Search tool to provide grounded external information.
+        `;
+
+        const prompt = `
+          Context:
+          ${context}
+
+          Conversation History:
+          ${history}
+
+          Question: ${question}
+        `;
+
+        const response = await ai.models.generateContent({
+          model: "gemini-3.1-pro-preview",
+          contents: prompt,
+          config: {
+            systemInstruction,
+            tools: [{ googleSearch: {} }],
+          }
+        });
+
+        res.json({ content: response.text || "No response generated." });
+      } catch (fallbackError: any) {
+        console.error("RAG Gemini Fallback Error:", fallbackError);
+        res.status(500).json({ error: fallbackError.message });
+      }
     }
   });
 
@@ -470,14 +761,42 @@ async function startServer() {
 
       res.json({ content });
     } catch (error: any) {
-      console.error("Groq Vision Proxy Error:", error);
+      console.error("Groq Vision Proxy Error (Attempting Gemini fallback):", error.message);
       
-      // Handle specific Groq errors if possible
-      if (error.status === 413) {
-        return res.status(413).json({ error: "File too large for Groq Vision API." });
+      try {
+        const { prompt, fileData } = req.body;
+        const geminiKey = process.env.API_KEY || process.env.MY_API_KEY || process.env.GEMINI_API_KEY;
+        
+        if (!geminiKey) {
+          return res.status(401).json({ error: "ALL_API_KEYS_MISSING" });
+        }
+
+        const { GoogleGenAI } = await import("@google/genai");
+        const ai = new GoogleGenAI({ apiKey: geminiKey });
+        
+        const response = await ai.models.generateContent({
+          model: "gemini-1.5-flash",
+          contents: {
+            parts: [
+              { text: prompt },
+              {
+                inlineData: {
+                  data: fileData.data,
+                  mimeType: fileData.mimeType,
+                },
+              },
+            ],
+          },
+          config: {
+            systemInstruction: "You are a senior medical imaging specialist. Analyze the provided image and prompt with clinical accuracy. Provide a structured interpretation and include a medical disclaimer.",
+          }
+        });
+
+        res.json({ content: response.text || "No response generated." });
+      } catch (fallbackError: any) {
+        console.error("Groq Vision Gemini Fallback Error:", fallbackError);
+        res.status(500).json({ error: fallbackError.message });
       }
-      
-      res.status(500).json({ error: error.message || "Unknown error during vision analysis" });
     }
   });
 

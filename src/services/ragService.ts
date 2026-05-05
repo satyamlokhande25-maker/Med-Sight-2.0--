@@ -1,27 +1,57 @@
 import * as pdfjs from 'pdfjs-dist';
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 
-// Configure pdfjs worker using CDN for reliability (matches version in package.json)
-pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.5.207/pdf.worker.min.mjs`;
+// Configure pdfjs worker using local file via Vite for reliability
+if (typeof window !== 'undefined') {
+  pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+}
 
 export async function extractTextFromPDF(base64Data: string): Promise<string> {
-  const binaryString = atob(base64Data);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
+  try {
+    console.log("Starting PDF extraction...");
+    const binaryString = atob(base64Data);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    
+    const loadingTask = pdfjs.getDocument({ 
+      data: bytes,
+      useWorkerFetch: true,
+      isEvalSupported: false,
+    });
+    
+    const pdf = await loadingTask.promise;
+    console.log(`PDF loaded successfully. Pages: ${pdf.numPages}`);
+    
+    let fullText = "";
+    
+    for (let i = 1; i <= pdf.numPages; i++) {
+      try {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items
+          .map((item: any) => (item as any).str)
+          .join(" ")
+          .replace(/\s+/g, ' ')
+          .trim();
+        
+        fullText += `[Page ${i}]\n${pageText}\n\n`;
+      } catch (pageError) {
+        console.warn(`Error extracting text from page ${i}:`, pageError);
+        fullText += `[Page ${i} - Extraction Error]\n`;
+      }
+    }
+    
+    if (!fullText.trim()) {
+      throw new Error("No text could be extracted from the PDF. It might be an image-only PDF or encrypted.");
+    }
+    
+    return fullText;
+  } catch (error: any) {
+    console.error("Detailed PDF Extraction Error:", error);
+    throw new Error(`PDF Extraction Failed: ${error.message || "Unknown error"}`);
   }
-  
-  const loadingTask = pdfjs.getDocument({ data: bytes });
-  const pdf = await loadingTask.promise;
-  let fullText = "";
-  
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const textContent = await page.getTextContent();
-    const pageText = textContent.items.map((item: any) => item.str).join(" ");
-    fullText += pageText + "\n";
-  }
-  
-  return fullText;
 }
 
 import { fetchWithRetry } from '../lib/fetchWithRetry';
