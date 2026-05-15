@@ -11,7 +11,7 @@ import { Patient, Bill } from '../types';
 import { AuthProvider, useAuth } from '../contexts/AuthProvider';
 
 export function BillingManager() {
-  const { isSuperAdmin } = useAuth();
+  const { isAdmin, isSuperAdmin } = useAuth();
   const [showNewModal, setShowNewModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [newBill, setNewBill] = useState({
@@ -262,7 +262,7 @@ export function BillingManager() {
                     >
                       <Download size={18} />
                     </button>
-                    {isSuperAdmin && (
+                    {isAdmin && (
                       <button 
                         onClick={() => handleDeleteBill(b.id, b.patientName)}
                         className="p-2 bg-zinc-800 text-zinc-400 hover:text-red-500 rounded-xl transition-all"

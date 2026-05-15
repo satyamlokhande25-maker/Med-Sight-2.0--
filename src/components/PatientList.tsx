@@ -646,7 +646,7 @@ export function PatientList() {
                   </td>
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          {isSuperAdmin && (
+                          {isAdmin && (
                             <button 
                               onClick={(e) => {
                                 e.stopPropagation();

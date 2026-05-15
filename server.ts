@@ -21,8 +21,9 @@ process.on('uncaughtException', (err) => {
 });
 
 const groqModel = "llama-3.3-70b-versatile";
-const groqVisionModel = "llama-3.2-90b-vision-preview";
+const groqVisionModel = "llama-3.2-11b-vision-preview";
 const geminiModel = "gemini-3-flash-preview";
+const proGeminiModel = "gemini-3.1-pro-preview";
 const videoModel = "veo-3.1-lite-generate-preview";
 
 async function startServer() {
@@ -62,10 +63,10 @@ async function startServer() {
       const ai = new GoogleGenAI({ apiKey });
       
       const models = [
-        "gemini-2.0-flash",
         model,
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
+        "gemini-3-flash-preview",
+        "gemini-3.1-pro-preview",
+        "gemini-3.1-flash-lite",
         "gemini-flash-latest"
       ].filter((m, i, self) => self.indexOf(m) === i); // Unique models
 
@@ -127,7 +128,7 @@ async function startServer() {
 
   app.post("/api/gemini/vision", async (req, res) => {
     try {
-      const { prompt, fileData, model = "gemini-1.5-pro" } = req.body;
+      const { prompt, fileData, model = "gemini-3.1-pro-preview" } = req.body;
       const apiKey = process.env.API_KEY || process.env.MY_API_KEY || process.env.GEMINI_API_KEY;
       if (!apiKey) {
         return res.status(401).json({ error: "GEMINI_API_KEY_MISSING" });
@@ -138,9 +139,9 @@ async function startServer() {
       
       const models = [
         model,
-        "gemini-1.5-pro",
-        "gemini-1.5-flash",
-        "gemini-2.0-flash"
+        "gemini-3-flash-preview",
+        "gemini-3.1-pro-preview",
+        "gemini-3.1-flash-lite"
       ].filter((m, i, self) => self.indexOf(m) === i);
 
       let lastError = null;
@@ -159,7 +160,7 @@ async function startServer() {
           }
 
           const response = await ai.models.generateContent({
-            model: currentModel === groqVisionModel ? "gemini-1.5-pro" : currentModel,
+            model: currentModel === groqVisionModel ? "gemini-3.1-pro-preview" : currentModel,
             contents: { parts },
             config: {
               systemInstruction: "You are a senior radiologist and clinical pathologist. Analyze the provided medical document (X-ray, MRI, or lab report) with high precision. Identify key findings, potential abnormalities, and provide a structured clinical interpretation. Always include a disclaimer that this is an AI-assisted analysis and must be verified by a human specialist.",
@@ -591,7 +592,7 @@ async function startServer() {
         }
 
         const response = await ai.models.generateContent({
-          model: "gemini-2.0-flash",
+          model: "gemini-3-flash-preview",
           contents: geminiMessages,
           config: {
             systemInstruction: systemMessage,
@@ -775,7 +776,7 @@ async function startServer() {
         const ai = new GoogleGenAI({ apiKey: geminiKey });
         
         const response = await ai.models.generateContent({
-          model: "gemini-1.5-flash",
+          model: "gemini-3-flash-preview",
           contents: {
             parts: [
               { text: prompt },

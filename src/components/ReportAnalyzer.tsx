@@ -38,6 +38,8 @@ interface FilePreview {
   error?: string;
 }
 
+import { extractClinicalData } from '@/services/gemini';
+
 export function ReportAnalyzer() {
   const [files, setFiles] = useState<FilePreview[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -99,8 +101,14 @@ export function ReportAnalyzer() {
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = Array.from(e.target.files || []);
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement> | React.DragEvent) => {
+    let selectedFiles: File[] = [];
+    if ('files' in e.target && e.target.files) {
+      selectedFiles = Array.from(e.target.files);
+    } else if ('dataTransfer' in e) {
+      selectedFiles = Array.from(e.dataTransfer.files);
+    }
+
     if (selectedFiles.length === 0) return;
 
     setCachedContext(""); // Clear cache on new files
@@ -110,10 +118,10 @@ export function ReportAnalyzer() {
       // Client-side size checks
       const isImage = selectedFile.type.startsWith('image/');
       const isPDF = selectedFile.type === 'application/pdf';
-      const maxSize = isImage ? 4 * 1024 * 1024 : 10 * 1024 * 1024; // 4MB for images, 10MB for PDFs
+      const maxSize = (isImage || isPDF) ? 20 * 1024 * 1024 : 10 * 1024 * 1024; // Increased limits for Gemini processing
 
       if (selectedFile.size > maxSize) {
-        const errorMsg = `File too large. Max ${isImage ? '4MB' : '10MB'} for ${isImage ? 'images' : 'PDFs'}.`;
+        const errorMsg = `File too large. Max 20MB for ${isImage ? 'images' : 'PDFs'}.`;
         setFiles(prev => [...prev, {
           id,
           name: selectedFile.name,
@@ -134,7 +142,7 @@ export function ReportAnalyzer() {
         name: selectedFile.name,
         type: selectedFile.type,
         data: '',
-        previewUrl: URL.createObjectURL(selectedFile),
+        previewUrl: selectedFile.type.startsWith('image/') ? URL.createObjectURL(selectedFile) : '',
         size: selectedFile.size,
         progress: 0,
         status: 'uploading'
@@ -174,6 +182,18 @@ export function ReportAnalyzer() {
 
     setAnalysis(null);
     setChatHistory([]);
+    if ('value' in e.target) e.target.value = ''; // Reset input
+  };
+
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    handleFileChange(e);
   };
 
   const handleCameraCapture = (base64: string) => {
@@ -199,20 +219,20 @@ export function ReportAnalyzer() {
     if (readyFiles.length === 0) return;
 
     setIsAnalyzing(true);
-    setAnalysisStep("Extracting text from documents...");
+    setAnalysisStep("Scanning documents with Gemini AI...");
     setNeedsKey(false);
     
     try {
       let result = "";
       let context = "";
       
-      // Process all ready files to build context
-      for (const file of readyFiles) {
-        setAnalysisStep(`Analyzing ${file.name}...`);
+      // Parallelize file processing
+      const processingResults = await Promise.all(readyFiles.map(async (file) => {
+        setAnalysisStep(`Processing ${file.name}...`);
         try {
-          if (file.type === 'application/pdf') {
-            const text = await extractTextFromPDF(file.data);
-            context += `--- Document: ${file.name} ---\n${text}\n\n`;
+          if (file.type === 'application/pdf' || file.type.startsWith('image/')) {
+            const extractedData = await extractClinicalData({ data: file.data, mimeType: file.type });
+            return `--- Multimodal Analysis: ${file.name} ---\n${extractedData}\n\n`;
           } else if (file.type === 'text/plain') {
             const binaryString = atob(file.data);
             const bytes = new Uint8Array(binaryString.length);
@@ -220,18 +240,25 @@ export function ReportAnalyzer() {
               bytes[i] = binaryString.charCodeAt(i);
             }
             const text = new TextDecoder().decode(bytes);
-            context += `--- Document: ${file.name} ---\n${text}\n\n`;
-          } else if (file.type.startsWith('image/')) {
-            const prompt = "Extract all medical findings, values, and clinical data from this image in a structured text format. Be extremely precise.";
-            const visionText = await getGroqVisionResponse(prompt, { data: file.data, mimeType: file.type });
-            context += `--- Image Analysis: ${file.name} ---\n${visionText}\n\n`;
+            return `--- Document: ${file.name} ---\n${text}\n\n`;
           }
+          return "";
         } catch (fileError: any) {
           console.error(`Error processing file ${file.name}:`, fileError);
-          toast.error(`Failed to process ${file.name}: ${fileError.message}`);
-          context += `--- Document: ${file.name} (Processing Error) ---\nError: ${fileError.message}\n\n`;
+          
+          if (file.type === 'application/pdf') {
+            try {
+              const text = await extractTextFromPDF(file.data);
+              return `--- Document (Local Extraction): ${file.name} ---\n${text}\n\n`;
+            } catch (fallbackError) {
+              return `--- Document: ${file.name} (Processing Error) ---\nError: ${fileError.message}\n\n`;
+            }
+          }
+          return `--- Document: ${file.name} (Processing Error) ---\nError: ${fileError.message}\n\n`;
         }
-      }
+      }));
+
+      context = processingResults.join("");
 
       if (context) {
         setAnalysisStep("Correlating findings and generating report...");
@@ -282,11 +309,11 @@ export function ReportAnalyzer() {
       
       // If context is empty, try to re-extract (fallback)
       if (!context) {
-        for (const file of readyFiles) {
+        const results = await Promise.all(readyFiles.map(async (file) => {
           try {
-            if (file.type === 'application/pdf') {
-              const text = await extractTextFromPDF(file.data);
-              context += `--- Document: ${file.name} ---\n${text}\n\n`;
+            if (file.type === 'application/pdf' || file.type.startsWith('image/')) {
+              const text = await extractClinicalData({ data: file.data, mimeType: file.type });
+              return `--- Multimodal Analysis: ${file.name} ---\n${text}\n\n`;
             } else if (file.type === 'text/plain') {
               const binaryString = atob(file.data);
               const bytes = new Uint8Array(binaryString.length);
@@ -294,13 +321,15 @@ export function ReportAnalyzer() {
                 bytes[i] = binaryString.charCodeAt(i);
               }
               const text = new TextDecoder().decode(bytes);
-              context += `--- Document: ${file.name} ---\n${text}\n\n`;
+              return `--- Document: ${file.name} ---\n${text}\n\n`;
             }
+            return "";
           } catch (fileError: any) {
             console.error(`Error processing file ${file.name} during chat:`, fileError);
-            context += `--- Document: ${file.name} (Processing Error) ---\n`;
+            return `--- Document: ${file.name} (Processing Error) ---\n`;
           }
-        }
+        }));
+        context = results.join("");
         setCachedContext(context);
       }
       
@@ -352,9 +381,11 @@ export function ReportAnalyzer() {
           <div 
             className={cn(
               "bg-zinc-900 p-8 rounded-[2.5rem] border-2 border-dashed transition-all cursor-pointer flex flex-col items-center justify-center text-center gap-4 min-h-[300px]",
-              files.length > 0 ? "border-emerald-500 bg-emerald-500/5" : "border-zinc-800 hover:border-emerald-500 hover:bg-zinc-950"
+              files.length > 0 ? "border-emerald-500 bg-emerald-500/5 shadow-inner" : "border-zinc-800 hover:border-emerald-500 hover:bg-zinc-950"
             )}
-            onClick={() => files.length > 0 ? null : fileInputRef.current?.click()}
+            onClick={() => fileInputRef.current?.click()}
+            onDragOver={onDragOver}
+            onDrop={onDrop}
           >
             <input 
               type="file" 

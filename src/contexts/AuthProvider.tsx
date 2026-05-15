@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { auth, signInWithGoogle, logout, signInWithEmail, signUpWithEmail, db } from '../lib/firebase';
 
 interface AuthContextType {
@@ -28,16 +28,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isAdmin = isAdminState || isSuperAdmin;
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    let unsubscribeAdmin: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       setUser(user);
       
+      if (unsubscribeAdmin) {
+        unsubscribeAdmin();
+        unsubscribeAdmin = null;
+      }
+
       if (user) {
-        // Check if user is in admins collection
+        // Listen to admins collection for this specific user in real-time
         try {
-          const adminDoc = await getDoc(doc(db, 'admins', user.uid));
-          setIsAdminState(adminDoc.exists());
+          unsubscribeAdmin = onSnapshot(doc(db, 'admins', user.uid), (doc) => {
+            setIsAdminState(doc.exists());
+          }, (error) => {
+            console.error("Error listening to admin status:", error);
+            setIsAdminState(false);
+          });
         } catch (error) {
-          console.error("Error checking admin status:", error);
+          console.error("Error setting up admin listener:", error);
           setIsAdminState(false);
         }
       } else {
@@ -46,7 +57,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       setLoading(false);
     });
-    return () => unsubscribe();
+
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeAdmin) unsubscribeAdmin();
+    };
   }, []);
 
   const signIn = async () => {
